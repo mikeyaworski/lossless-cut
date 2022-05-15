@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import { Checkbox, RadioGroup, Paragraph } from 'evergreen-ui';
 import Swal from 'sweetalert2';
 import i18n from 'i18next';
@@ -8,12 +8,9 @@ import SyntaxHighlighter from 'react-syntax-highlighter';
 import { tomorrow as style } from 'react-syntax-highlighter/dist/esm/styles/hljs';
 import JSON5 from 'json5';
 
-import { parseDuration } from './util/duration';
+import { parseDuration, formatDuration } from './util/duration';
 import { parseYouTube } from './edlFormats';
 import CopyClipboardButton from './components/CopyClipboardButton';
-import { errorToast } from './util';
-
-import SortableFiles from './SortableFiles';
 
 const electron = window.require('electron'); // eslint-disable-line
 
@@ -21,12 +18,12 @@ const { dialog, app } = electron.remote;
 
 const ReactSwal = withReactContent(Swal);
 
-export async function promptTimeOffset(inputValue) {
+export async function promptTimeOffset({ initialValue, title, text }) {
   const { value } = await Swal.fire({
-    title: i18n.t('Set custom start time offset'),
-    text: i18n.t('Instead of video apparently starting at 0, you can offset by a specified value. This only applies to the preview inside LosslessCut and does not modify the file in any way. (Useful for viewing/cutting videos according to timecodes)'),
+    title,
+    text,
     input: 'text',
-    inputValue: inputValue || '',
+    inputValue: initialValue || '',
     showCancelButton: true,
     inputPlaceholder: '00:00:00.000',
   });
@@ -37,7 +34,7 @@ export async function promptTimeOffset(inputValue) {
 
   const duration = parseDuration(value);
   // Invalid, try again
-  if (duration === undefined) return promptTimeOffset(value);
+  if (duration === undefined) return promptTimeOffset({ initialValue: value, title, text });
 
   return duration;
 }
@@ -49,7 +46,8 @@ export async function askForHtml5ifySpeed({ allowedOptions, showRemember, initia
     'fastest-audio': i18n.t('Fastest: Low playback speed'),
     'fastest-audio-remux': i18n.t('Fastest: Low playback speed (audio remux), likely to fail'),
     fast: i18n.t('Fast: Full quality remux (no audio), likely to fail'),
-    'fast-audio': i18n.t('Fast: Full quality remux, likely to fail'),
+    'fast-audio-remux': i18n.t('Fast: Full quality remux, likely to fail'),
+    'fast-audio': i18n.t('Fast: Remux video, encode audio (fails if unsupported video codec)'),
     slow: i18n.t('Slow: Low quality encode (no audio)'),
     'slow-audio': i18n.t('Slow: Low quality encode'),
     slowest: i18n.t('Slowest: High quality encode'),
@@ -65,14 +63,14 @@ export async function askForHtml5ifySpeed({ allowedOptions, showRemember, initia
   const Html = () => {
     const [option, setOption] = useState(selectedOption);
     const [remember, setRemember] = useState(rememberChoice);
-    function onOptionChange(e) {
+    const onOptionChange = useCallback((e) => {
       selectedOption = e.target.value;
       setOption(selectedOption);
-    }
-    function onRememberChange(e) {
+    }, []);
+    const onRememberChange = useCallback((e) => {
       rememberChoice = e.target.checked;
       setRemember(rememberChoice);
-    }
+    }, []);
     return (
       <div style={{ textAlign: 'left' }}>
         <Paragraph>{i18n.t('These options will let you convert files to a format that is supported by the player. You can try different options and see which works with your file. Note that the conversion is for preview only. When you run an export, the output will still be lossless with full quality')}</Paragraph>
@@ -118,6 +116,17 @@ export async function askForYouTubeInput() {
   return parseYouTube(value);
 }
 
+export async function askForInputDir(defaultPath) {
+  const { filePaths } = await dialog.showOpenDialog({
+    properties: ['openDirectory', 'createDirectory'],
+    defaultPath,
+    title: i18n.t('Please confirm folder'),
+    message: i18n.t('Press confirm to grant LosslessCut permissions to write the project file (This is due to App Sandbox restrictions)'),
+    buttonLabel: i18n.t('Confirm'),
+  });
+  return (filePaths && filePaths.length === 1) ? filePaths[0] : undefined;
+}
+
 export async function askForOutDir(defaultPath) {
   const { filePaths } = await dialog.showOpenDialog({
     properties: ['openDirectory', 'createDirectory'],
@@ -125,6 +134,15 @@ export async function askForOutDir(defaultPath) {
     title: i18n.t('Where do you want to save output files?'),
     message: i18n.t('Where do you want to save output files? Make sure there is enough free space in this folder'),
     buttonLabel: i18n.t('Select output folder'),
+  });
+  return (filePaths && filePaths.length === 1) ? filePaths[0] : undefined;
+}
+
+export async function askForFfPath(defaultPath) {
+  const { filePaths } = await dialog.showOpenDialog({
+    properties: ['openDirectory'],
+    defaultPath,
+    title: i18n.t('Select custom FFmpeg directory'),
   });
   return (filePaths && filePaths.length === 1) ? filePaths[0] : undefined;
 }
@@ -198,8 +216,9 @@ export async function createNumSegments(fileDuration) {
   return edl;
 }
 
+const exampleDuration = '00:00:05.123';
+
 async function askForSegmentDuration(fileDuration) {
-  const example = '00:00:05.123';
   const { value } = await Swal.fire({
     input: 'text',
     showCancelButton: true,
@@ -211,13 +230,67 @@ async function askForSegmentDuration(fileDuration) {
         const numSegments = Math.ceil(fileDuration / duration);
         if (duration > 0 && duration < fileDuration && numSegments <= maxSegments) return undefined;
       }
-      return i18n.t('Please input a valid duration. Example: {{example}}', { example });
+      return i18n.t('Please input a valid duration. Example: {{example}}', { example: exampleDuration });
     },
   });
 
   if (value == null) return undefined;
 
   return parseDuration(value);
+}
+
+async function askForShiftSegmentsVariant(time) {
+  const { value } = await Swal.fire({
+    input: 'radio',
+    showCancelButton: true,
+    inputOptions: {
+      start: i18n.t('Start'),
+      end: i18n.t('End'),
+      both: i18n.t('Both'),
+    },
+    inputValue: 'both',
+    text: i18n.t('Do you want to shift the start or end timestamp by {{time}}?', { time: formatDuration({ seconds: time, shorten: true }) }),
+  });
+  return value;
+}
+
+export async function askForShiftSegments() {
+  function parseValue(value) {
+    let parseableValue = value;
+    let sign = 1;
+    if (parseableValue[0] === '-') {
+      parseableValue = parseableValue.substring(1);
+      sign = -1;
+    }
+    const duration = parseDuration(parseableValue);
+    if (duration != null && duration > 0) {
+      return duration * sign;
+    }
+    return undefined;
+  }
+
+  const { value } = await Swal.fire({
+    input: 'text',
+    showCancelButton: true,
+    inputValue: '00:00:00.000',
+    text: i18n.t('Shift all segments on the timeline by this amount. Negative values will be shifted back, while positive value will be shifted forward in time.'),
+    inputValidator: (v) => {
+      const parsed = parseValue(v);
+      if (parsed == null) return i18n.t('Please input a valid duration. Example: {{example}}', { example: exampleDuration });
+      return undefined;
+    },
+  });
+
+  if (value == null) return undefined;
+  const parsed = parseValue(value);
+
+  const shiftVariant = await askForShiftSegmentsVariant(parsed);
+  if (shiftVariant == null) return undefined;
+
+  return {
+    shiftAmount: parsed,
+    shiftValues: shiftVariant === 'both' ? ['start', 'end'] : [shiftVariant],
+  };
 }
 
 export async function askForMetadataKey() {
@@ -237,6 +310,15 @@ export async function confirmExtractAllStreamsDialog() {
     text: i18n.t('Please confirm that you want to extract all tracks as separate files'),
     showCancelButton: true,
     confirmButtonText: i18n.t('Extract all tracks'),
+  });
+  return !!value;
+}
+
+export async function confirmExtractFramesAsImages({ numFrames }) {
+  const { value } = await Swal.fire({
+    text: i18n.t('Please confirm that you want to extract all {{numFrames}} frames as separate images', { numFrames }),
+    showCancelButton: true,
+    confirmButtonText: i18n.t('Extract all frames'),
   });
   return !!value;
 }
@@ -266,7 +348,7 @@ const CleanupChoices = ({ cleanupChoicesInitial, onChange: onChangeProp }) => {
   );
 };
 
-export async function cleanupFilesDialog(cleanupChoicesIn = {}) {
+export async function showCleanupFilesDialog(cleanupChoicesIn = {}) {
   let cleanupChoices = cleanupChoicesIn;
 
   const { value } = await ReactSwal.fire({
@@ -343,79 +425,22 @@ export async function labelSegmentDialog({ currentName, maxLength }) {
   return value;
 }
 
+export async function selectSegmentsByLabelDialog(currentName) {
+  const { value } = await Swal.fire({
+    showCancelButton: true,
+    title: i18n.t('Select segments by label'),
+    inputValue: currentName,
+    input: 'text',
+  });
+  return value;
+}
+
 export function openAbout() {
   Swal.fire({
     icon: 'info',
-    title: 'About LosslessCut',
-    text: `You are running version ${app.getVersion()}`,
+    title: i18n.t('About LosslessCut'),
+    text: i18n.t('You are running version {{version}}', { version: app.getVersion() }),
   });
-}
-
-export async function showMergeDialog(paths, onMergeClick) {
-  let swalElem;
-  let outPaths = paths;
-  let allStreams = false;
-  let segmentsToChapters = false;
-  const { dismiss } = await ReactSwal.fire({
-    width: '90%',
-    showCancelButton: true,
-    confirmButtonText: i18n.t('Merge!'),
-    cancelButtonText: i18n.t('Cancel'),
-    willOpen: (el) => { swalElem = el; },
-    title: i18n.t('Merge/concatenate files'),
-    html: (<SortableFiles
-      items={outPaths}
-      onChange={(val) => { outPaths = val; }}
-      onAllStreamsChange={(val) => { allStreams = val; }}
-      onSegmentsToChaptersChange={(val) => { segmentsToChapters = val; }}
-      helperContainer={() => swalElem}
-    />),
-  });
-
-  if (!dismiss) {
-    await onMergeClick({ paths: outPaths, allStreams, segmentsToChapters });
-  }
-}
-
-export async function showMultipleFilesDialog(paths, onMergeClick, onBatchLoadFilesClick) {
-  const { isConfirmed, isDenied } = await Swal.fire({
-    showCloseButton: true,
-    showDenyButton: true,
-    denyButtonAriaLabel: '',
-    denyButtonColor: '#7367f0',
-    denyButtonText: i18n.t('Batch files'),
-    confirmButtonText: i18n.t('Merge/concatenate files'),
-    title: i18n.t('Multiple files'),
-    text: i18n.t('Do you want to merge/concatenate the files or load them for batch processing?'),
-  });
-
-  if (isDenied) {
-    await onBatchLoadFilesClick(paths);
-    return;
-  }
-
-  if (isConfirmed) {
-    await showMergeDialog(paths, onMergeClick);
-  }
-}
-
-export async function showOpenAndMergeDialog({ defaultPath, onMergeClick }) {
-  const title = i18n.t('Please select files to be merged');
-  const message = i18n.t('Please select files to be merged. The files need to be of the exact same format and codecs');
-  const { canceled, filePaths } = await dialog.showOpenDialog({
-    title,
-    defaultPath,
-    properties: ['openFile', 'multiSelections'],
-    message,
-  });
-  if (canceled || !filePaths) return;
-
-  if (filePaths.length < 2) {
-    errorToast(i18n.t('More than one file must be selected'));
-    return;
-  }
-
-  showMergeDialog(filePaths, onMergeClick);
 }
 
 export async function showEditableJsonDialog({ text, title, inputLabel, inputValue, inputValidator }) {

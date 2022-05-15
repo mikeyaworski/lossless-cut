@@ -5,7 +5,8 @@ import moment from 'moment';
 import i18n from 'i18next';
 import Timecode from 'smpte-timecode';
 
-import { getOutPath, isDurationValid, getExtensionForFormat, isMac, isWindows } from './util';
+import { pcmAudioCodecs, getMapStreamsArgs } from './util/streams';
+import { getOutPath, isDurationValid, getExtensionForFormat, isWindows, isMac, platform, arch } from './util';
 
 const execa = window.require('execa');
 const { join } = window.require('path');
@@ -14,6 +15,12 @@ const readChunk = window.require('read-chunk');
 const readline = window.require('readline');
 const isDev = window.require('electron-is-dev');
 
+let customFfPath;
+
+// Note that this does not work on MAS because of sandbox restrictions
+export function setCustomFfPath(path) {
+  customFfPath = path;
+}
 
 export function getFfCommandLine(cmd, args) {
   const mapArg = arg => (/[^0-9a-zA-Z-_]/.test(arg) ? `'${arg}'` : arg);
@@ -21,26 +28,29 @@ export function getFfCommandLine(cmd, args) {
 }
 
 function getFfPath(cmd) {
-  // Testing non-mac setup on mac:
-  // return `node_modules/ffmpeg-ffprobe-static/${cmd}`;
-
-  if (isMac) {
-    return isDev ? `ffmpeg-mac/${cmd}` : join(window.process.resourcesPath, cmd);
-  }
-
   const exeName = isWindows ? `${cmd}.exe` : cmd;
-  return isDev
-    ? `node_modules/ffmpeg-ffprobe-static/${exeName}`
-    : join(window.process.resourcesPath, `node_modules/ffmpeg-ffprobe-static/${exeName}`);
+
+  if (customFfPath) return join(customFfPath, exeName);
+  if (isDev) return join('ffmpeg', `${platform}-${arch}`, exeName);
+  return join(window.process.resourcesPath, exeName);
 }
 
 export const getFfmpegPath = () => getFfPath('ffmpeg');
 export const getFfprobePath = () => getFfPath('ffprobe');
 
-export async function runFfprobe(args) {
+export async function runFfprobe(args, { timeout = isDev ? 10000 : 30000 } = {}) {
   const ffprobePath = getFfprobePath();
   console.log(getFfCommandLine('ffprobe', args));
-  return execa(ffprobePath, args);
+  const ps = execa(ffprobePath, args);
+  const timer = setTimeout(() => {
+    console.warn('killing timed out ffprobe');
+    ps.kill();
+  }, timeout);
+  try {
+    return await ps;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export function runFfmpeg(args) {
@@ -50,7 +60,8 @@ export function runFfmpeg(args) {
 }
 
 
-export function handleProgress(process, cutDuration, onProgress) {
+export function handleProgress(process, cutDuration, onProgress, customMatcher = () => {}) {
+  if (!onProgress) return;
   onProgress(0);
 
   const rl = readline.createInterface({ input: process.stderr });
@@ -61,7 +72,10 @@ export function handleProgress(process, cutDuration, onProgress) {
       let match = line.match(/frame=\s*[^\s]+\s+fps=\s*[^\s]+\s+q=\s*[^\s]+\s+(?:size|Lsize)=\s*[^\s]+\s+time=\s*([^\s]+)\s+/);
       // Audio only looks like this: "line size=  233422kB time=01:45:50.68 bitrate= 301.1kbits/s speed= 353x    "
       if (!match) match = line.match(/(?:size|Lsize)=\s*[^\s]+\s+time=\s*([^\s]+)\s+/);
-      if (!match) return;
+      if (!match) {
+        customMatcher(line);
+        return;
+      }
 
       const str = match[1];
       // console.log(str);
@@ -91,15 +105,19 @@ function getIntervalAroundTime(time, window) {
   };
 }
 
-export async function readFrames({ filePath, aroundTime, window, stream }) {
+export async function readFrames({ filePath, aroundTime, window, streamIndex }) {
   let intervalsArgs = [];
   if (aroundTime != null) {
     const { from, to } = getIntervalAroundTime(aroundTime, window);
     intervalsArgs = ['-read_intervals', `${from}%${to}`];
   }
-  const { stdout } = await runFfprobe(['-v', 'error', ...intervalsArgs, '-show_packets', '-select_streams', stream, '-show_entries', 'packet=pts_time,flags', '-of', 'json', filePath]);
+  const { stdout } = await runFfprobe(['-v', 'error', ...intervalsArgs, '-show_packets', '-select_streams', streamIndex, '-show_entries', 'packet=pts_time,flags', '-of', 'json', filePath]);
   const packetsFiltered = JSON.parse(stdout).packets
-    .map(p => ({ keyframe: p.flags[0] === 'K', time: parseFloat(p.pts_time, 10) }))
+    .map(p => ({
+      keyframe: p.flags[0] === 'K',
+      time: parseFloat(p.pts_time, 10),
+      createdAt: new Date(),
+    }))
     .filter(p => !Number.isNaN(p.time));
 
   return sortBy(packetsFiltered, 'time');
@@ -158,15 +176,14 @@ export function findNearestKeyFrameTime({ frames, time, direction, fps }) {
   const sigma = fps ? (1 / fps) : 0.1;
   const keyframes = frames.filter(f => f.keyframe && (direction > 0 ? f.time > time + sigma : f.time < time - sigma));
   if (keyframes.length === 0) return undefined;
-  const nearestFrame = sortBy(keyframes, keyframe => (direction > 0 ? keyframe.time - time : time - keyframe.time))[0];
-  if (!nearestFrame) return undefined;
-  return nearestFrame.time;
+  const nearestKeyFrame = sortBy(keyframes, keyframe => (direction > 0 ? keyframe.time - time : time - keyframe.time))[0];
+  if (!nearestKeyFrame) return undefined;
+  return nearestKeyFrame.time;
 }
 
-export async function tryReadChaptersToEdl(filePath) {
+export async function tryMapChaptersToEdl(chapters) {
   try {
-    const { stdout } = await runFfprobe(['-i', filePath, '-show_chapters', '-print_format', 'json', '-hide_banner']);
-    return JSON.parse(stdout).chapters.map((chapter) => {
+    return chapters.map((chapter) => {
       const start = parseFloat(chapter.start_time);
       const end = parseFloat(chapter.end_time);
       if (Number.isNaN(start) || Number.isNaN(end)) return undefined;
@@ -185,8 +202,8 @@ export async function tryReadChaptersToEdl(filePath) {
   }
 }
 
-export async function getFormatData(filePath) {
-  console.log('getFormatData', filePath);
+async function readFormatData(filePath) {
+  console.log('readFormatData', filePath);
 
   const { stdout } = await runFfprobe([
     '-of', 'json', '-show_format', '-i', filePath, '-hide_banner',
@@ -196,24 +213,23 @@ export async function getFormatData(filePath) {
 
 
 export async function getDuration(filePath) {
-  return parseFloat((await getFormatData(filePath)).duration);
+  return parseFloat((await readFormatData(filePath)).duration);
 }
 
 export async function createChaptersFromSegments({ segmentPaths, chapterNames }) {
-  if (chapterNames) {
-    try {
-      const durations = await pMap(segmentPaths, (segmentPath) => getDuration(segmentPath), { concurrency: 3 });
-      let timeAt = 0;
-      return durations.map((duration, i) => {
-        const ret = { start: timeAt, end: timeAt + duration, name: chapterNames[i] };
-        timeAt += duration;
-        return ret;
-      });
-    } catch (err) {
-      console.error('Failed to create chapters from segments', err);
-    }
+  if (!chapterNames) return undefined;
+  try {
+    const durations = await pMap(segmentPaths, (segmentPath) => getDuration(segmentPath), { concurrency: 3 });
+    let timeAt = 0;
+    return durations.map((duration, i) => {
+      const ret = { start: timeAt, end: timeAt + duration, name: chapterNames[i] };
+      timeAt += duration;
+      return ret;
+    });
+  } catch (err) {
+    console.error('Failed to create chapters from segments', err);
+    return undefined;
   }
-  return undefined;
 }
 
 /**
@@ -222,58 +238,52 @@ export async function createChaptersFromSegments({ segmentPaths, chapterNames })
  * Therefore we have to map between detected format and encode format
  * See also ffmpeg -formats
  */
-function mapFormat(requestedFormat) {
+function mapDefaultFormat({ streams, requestedFormat }) {
+  if (requestedFormat === 'mp4') {
+    // Only MOV supports these, so switch to MOV https://github.com/mifi/lossless-cut/issues/948
+    if (streams.some((stream) => pcmAudioCodecs.includes(stream.codec_name))) {
+      return 'mov';
+    }
+  }
+
   switch (requestedFormat) {
     // These two cmds produce identical output, so we assume that encoding "ipod" means encoding m4a
     // ffmpeg -i example.aac -c copy OutputFile2.m4a
     // ffmpeg -i example.aac -c copy -f ipod OutputFile.m4a
     // See also https://github.com/mifi/lossless-cut/issues/28
-    case 'm4a': return 'ipod';
+    case 'm4a':
     case 'aac': return 'ipod';
     default: return requestedFormat;
   }
 }
 
-function determineOutputFormat(ffprobeFormats, ft) {
-  if (ffprobeFormats.includes(ft.ext)) return ft.ext;
+function determineOutputFormat(ffprobeFormats, fileTypeResponse) {
+  if (ffprobeFormats.includes(fileTypeResponse.ext)) return fileTypeResponse.ext;
   return ffprobeFormats[0] || undefined;
 }
 
-export async function getDefaultOutFormat(filePath, formatData) {
-  const formatsStr = formatData.format_name;
+export async function getSmarterOutFormat({ filePath, fileMeta: { format, streams } }) {
+  const formatsStr = format.format_name;
   console.log('formats', formatsStr);
   const formats = (formatsStr || '').split(',');
 
   // ffprobe sometimes returns a list of formats, try to be a bit smarter about it.
   const bytes = await readChunk(filePath, 0, 4100);
-  const ft = fileType(bytes) || {};
-  console.log(`fileType detected format ${JSON.stringify(ft)}`);
-  let assumedFormat = determineOutputFormat(formats, ft);
+  const fileTypeResponse = fileType(bytes) || {};
+  console.log(`fileType detected format ${JSON.stringify(fileTypeResponse)}`);
+  const assumedFormat = determineOutputFormat(formats, fileTypeResponse);
 
-  // https://github.com/mifi/lossless-cut/issues/367
-  if (assumedFormat === 'mp4' && formatData.tags && formatData.tags.major_brand === 'XAVC') assumedFormat = 'mov';
-
-  return mapFormat(assumedFormat);
-}
-
-export async function getAllStreams(filePath) {
-  const { stdout } = await runFfprobe([
-    '-of', 'json', '-show_entries', 'stream', '-i', filePath, '-hide_banner',
-  ]);
-
-  return JSON.parse(stdout);
+  return mapDefaultFormat({ streams, requestedFormat: assumedFormat });
 }
 
 export async function readFileMeta(filePath) {
   try {
-    const [formatData, allStreamsResponse] = await Promise.all([
-      getFormatData(filePath),
-      getAllStreams(filePath),
+    const { stdout } = await runFfprobe([
+      '-of', 'json', '-show_chapters', '-show_format', '-show_entries', 'stream', '-i', filePath, '-hide_banner',
     ]);
-    const fileFormat = await getDefaultOutFormat(filePath, formatData);
-    const { streams } = allStreamsResponse;
-    // console.log(streams, formatData, fileFormat);
-    return { formatData, fileFormat, streams };
+
+    const { streams = [], format = {}, chapters = [] } = JSON.parse(stdout);
+    return { format, streams, chapters };
   } catch (err) {
     // Windows will throw error with code ENOENT if format detection fails.
     if (err.exitCode === 1 || (isWindows && err.code === 'ENOENT')) {
@@ -321,7 +331,7 @@ async function extractNonAttachmentStreams({ customOutDir, filePath, streams }) 
   console.log('Extracting', streams.length, 'normal streams');
 
   const streamArgs = flatMap(streams, ({ index, codec, type, format: { format, ext } }) => [
-    '-map', `0:${index}`, '-c', 'copy', '-f', format, '-y', getOutPath(customOutDir, filePath, `stream-${index}-${type}-${codec}.${ext}`),
+    '-map', `0:${index}`, '-c', 'copy', '-f', format, '-y', getOutPath({ customOutDir, filePath, nameSuffix: `stream-${index}-${type}-${codec}.${ext}` }),
   ]);
 
   const ffmpegArgs = [
@@ -343,7 +353,7 @@ async function extractAttachmentStreams({ customOutDir, filePath, streams }) {
   const streamArgs = flatMap(streams, ({ index, codec_name: codec, codec_type: type }) => {
     const ext = codec || 'bin';
     return [
-      `-dump_attachment:${index}`, getOutPath(customOutDir, filePath, `stream-${index}-${type}-${codec}.${ext}`),
+      `-dump_attachment:${index}`, getOutPath({ customOutDir, filePath, nameSuffix: `stream-${index}-${type}-${codec}.${ext}` }),
     ];
   });
 
@@ -479,7 +489,17 @@ export async function renderWaveformPng({ filePath, aroundTime, window, color })
     ps2 = execa(ffmpegPath, args2, { encoding: null });
     ps1.stdout.pipe(ps2.stdin);
 
-    const { stdout } = await ps2;
+    const timer = setTimeout(() => {
+      ps1.kill();
+      ps2.kill();
+    }, 10000);
+
+    let stdout;
+    try {
+      ({ stdout } = await ps2);
+    } finally {
+      clearTimeout(timer);
+    }
 
     const blob = new Blob([stdout], { type: 'image/png' });
 
@@ -488,12 +508,33 @@ export async function renderWaveformPng({ filePath, aroundTime, window, color })
       from,
       aroundTime,
       to,
+      createdAt: new Date(),
     };
   } catch (err) {
     if (ps1) ps1.kill();
     if (ps2) ps2.kill();
     throw err;
   }
+}
+
+export async function blackDetect({ filePath, duration, minInterval = 0.05, onProgress }) {
+  const args = ['-hide_banner', '-i', filePath, '-vf', `blackdetect=d=${minInterval}`, '-an', '-f', 'null', '-'];
+  const process = execa(getFfmpegPath(), args, { encoding: null, buffer: false });
+
+  const blackSegments = [];
+
+  function customMatcher(line) {
+    const match = line.match(/^[blackdetect @ 0x[0-9a-f]+] black_start:([\d\\.]+) black_end:([\d\\.]+) black_duration:[\d\\.]+/);
+    if (!match) return;
+    const blackStart = parseFloat(match[1]);
+    const blackEnd = parseFloat(match[2]);
+    if (Number.isNaN(blackStart) || Number.isNaN(blackEnd)) return;
+    blackSegments.push({ blackStart, blackEnd });
+  }
+  handleProgress(process, duration, onProgress, customMatcher);
+
+  await process;
+  return blackSegments;
 }
 
 export async function extractWaveform({ filePath, outPath }) {
@@ -523,42 +564,21 @@ export async function extractWaveform({ filePath, outPath }) {
   console.timeEnd('ffmpeg');
 }
 
+const imageCaptureQuality = 3;
+
 // See also capture-frame.js
-export async function captureFrame({ timestamp, videoPath, outPath }) {
-  const args = [
+export async function captureFrame({ timestamp, videoPath, outPath, numFrames }) {
+  await runFfmpeg([
     '-ss', timestamp,
     '-i', videoPath,
-    '-vframes', '1',
-    '-q:v', '3',
+    '-vframes', numFrames,
+    '-q:v', imageCaptureQuality,
     '-y', outPath,
-  ];
-
-  const ffmpegPath = getFfmpegPath();
-  await execa(ffmpegPath, args, { encoding: null });
+  ]);
 }
 
-// https://www.ffmpeg.org/doxygen/3.2/libavutil_2utils_8c_source.html#l00079
-export const defaultProcessedCodecTypes = [
-  'video',
-  'audio',
-  'subtitle',
-  'attachment',
-];
 
 export const isMov = (format) => ['ismv', 'ipod', 'mp4', 'mov'].includes(format);
-
-export function isStreamThumbnail(stream) {
-  return stream && stream.disposition && stream.disposition.attached_pic === 1;
-}
-
-const getAudioStreams = (streams) => streams.filter(stream => stream.codec_type === 'audio');
-
-export function isAudioDefinitelyNotSupported(streams) {
-  const audioStreams = getAudioStreams(streams);
-  if (audioStreams.length === 0) return false;
-  // TODO this could be improved
-  return audioStreams.every(stream => ['ac3'].includes(stream.codec_name));
-}
 
 export function isIphoneHevc(format, streams) {
   if (!streams.some((s) => s.codec_name === 'hevc')) return false;
@@ -666,4 +686,162 @@ export function getTimecodeFromStreams(streams) {
     }
   });
   return foundTimecode;
+}
+
+export async function runStartupCheck() {
+  await runFfmpeg(['-hide_banner', '-f', 'lavfi', '-i', 'nullsrc=s=256x256:d=1', '-f', 'null', '-']);
+}
+
+export async function html5ify({ outPath, filePath: filePathArg, speed, hasAudio, hasVideo, onProgress }) {
+  let audio;
+  if (hasAudio) {
+    if (speed === 'slowest') audio = 'hq';
+    else if (['slow-audio', 'fast-audio', 'fastest-audio'].includes(speed)) audio = 'lq';
+    else if (['fast-audio-remux', 'fastest-audio-remux'].includes(speed)) audio = 'copy';
+  }
+
+  let video;
+  if (hasVideo) {
+    if (speed === 'slowest') video = 'hq';
+    else if (['slow-audio', 'slow'].includes(speed)) video = 'lq';
+    else video = 'copy';
+  }
+
+  console.log('Making HTML5 friendly version', { filePathArg, outPath, video, audio });
+
+  let videoArgs;
+  let audioArgs;
+
+  // h264/aac_at: No licensing when using HW encoder (Video/Audio Toolbox on Mac)
+  // https://github.com/mifi/lossless-cut/issues/372#issuecomment-810766512
+
+  const targetHeight = 400;
+
+  switch (video) {
+    case 'hq': {
+      if (isMac) {
+        videoArgs = ['-vf', 'format=yuv420p', '-allow_sw', '1', '-vcodec', 'h264', '-b:v', '15M'];
+      } else {
+        // AV1 is very slow
+        // videoArgs = ['-vf', 'format=yuv420p', '-sws_flags', 'neighbor', '-vcodec', 'libaom-av1', '-crf', '30', '-cpu-used', '8'];
+        // Theora is a bit faster but not that much
+        // videoArgs = ['-vf', '-c:v', 'libtheora', '-qscale:v', '1'];
+        // videoArgs = ['-vf', 'format=yuv420p', '-c:v', 'libvpx-vp9', '-crf', '30', '-b:v', '0', '-row-mt', '1'];
+        // x264 can only be used in GPL projects
+        videoArgs = ['-vf', 'format=yuv420p', '-c:v', 'libx264', '-profile:v', 'high', '-preset:v', 'slow', '-crf', '17'];
+      }
+      break;
+    }
+    case 'lq': {
+      if (isMac) {
+        videoArgs = ['-vf', `scale=-2:${targetHeight},format=yuv420p`, '-allow_sw', '1', '-sws_flags', 'lanczos', '-vcodec', 'h264', '-b:v', '1500k'];
+      } else {
+        // videoArgs = ['-vf', `scale=-2:${targetHeight},format=yuv420p`, '-sws_flags', 'neighbor', '-c:v', 'libtheora', '-qscale:v', '1'];
+        // x264 can only be used in GPL projects
+        videoArgs = ['-vf', `scale=-2:${targetHeight},format=yuv420p`, '-sws_flags', 'neighbor', '-c:v', 'libx264', '-profile:v', 'baseline', '-x264opts', 'level=3.0', '-preset:v', 'ultrafast', '-crf', '28'];
+      }
+      break;
+    }
+    case 'copy': {
+      videoArgs = ['-vcodec', 'copy'];
+      break;
+    }
+    default: {
+      videoArgs = ['-vn'];
+    }
+  }
+
+  switch (audio) {
+    case 'hq': {
+      if (isMac) {
+        audioArgs = ['-acodec', 'aac_at', '-b:a', '192k'];
+      } else {
+        audioArgs = ['-acodec', 'flac'];
+      }
+      break;
+    }
+    case 'lq': {
+      if (isMac) {
+        audioArgs = ['-acodec', 'aac_at', '-ar', '44100', '-ac', '2', '-b:a', '96k'];
+      } else {
+        audioArgs = ['-acodec', 'flac', '-ar', '11025', '-ac', '2'];
+      }
+      break;
+    }
+    case 'copy': {
+      audioArgs = ['-acodec', 'copy'];
+      break;
+    }
+    default: {
+      audioArgs = ['-an'];
+    }
+  }
+
+  const ffmpegArgs = [
+    '-hide_banner',
+
+    '-i', filePathArg,
+    ...videoArgs,
+    ...audioArgs,
+    '-sn',
+    '-y', outPath,
+  ];
+
+  const duration = await getDuration(filePathArg);
+  const process = runFfmpeg(ffmpegArgs);
+  if (duration) handleProgress(process, duration, onProgress);
+
+  const { stdout } = await process;
+  console.log(stdout);
+}
+
+// https://superuser.com/questions/543589/information-about-ffmpeg-command-line-options
+export const getExperimentalArgs = (ffmpegExperimental) => (ffmpegExperimental ? ['-strict', 'experimental'] : []);
+
+export const getVideoTimescaleArgs = (videoTimebase) => (videoTimebase != null ? ['-video_track_timescale', videoTimebase] : []);
+
+// inspired by https://gist.github.com/fernandoherreradelasheras/5eca67f4200f1a7cc8281747da08496e
+export async function cutEncodeSmartPart({ filePath, cutFrom, cutTo, outPath, outFormat, videoCodec, videoBitrate, videoTimebase, allFilesMeta, copyFileStreams, videoStreamIndex, ffmpegExperimental }) {
+  function getVideoArgs({ streamIndex, outputIndex }) {
+    if (streamIndex !== videoStreamIndex) return undefined;
+
+    return [
+      `-c:${outputIndex}`, videoCodec,
+      `-b:${outputIndex}`, videoBitrate,
+    ];
+  }
+
+  const mapStreamsArgs = getMapStreamsArgs({
+    allFilesMeta,
+    copyFileStreams,
+    outFormat,
+    getVideoArgs,
+  });
+
+  const ffmpegArgs = [
+    '-hide_banner',
+    // No progress if we set loglevel warning :(
+    // '-loglevel', 'warning',
+
+    // cannot use -ss before -i here (will lead to issues)
+    '-i', filePath,
+    '-ss', cutFrom.toFixed(5),
+    '-t', (cutTo - cutFrom).toFixed(5),
+
+    ...mapStreamsArgs,
+
+    // See https://github.com/mifi/lossless-cut/issues/170
+    '-ignore_unknown',
+
+    ...getVideoTimescaleArgs(videoTimebase),
+
+    ...getExperimentalArgs(ffmpegExperimental),
+
+    '-f', outFormat, '-y', outPath,
+  ];
+
+  const ffmpegCommandLine = getFfCommandLine('ffmpeg', ffmpegArgs);
+  console.log(ffmpegCommandLine);
+
+  await execa(getFfmpegPath(), ffmpegArgs);
 }

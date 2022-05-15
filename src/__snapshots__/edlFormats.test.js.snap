@@ -1,0 +1,166 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`parses pbf 1`] = `
+Array [
+  Object {
+    "end": 189.053,
+    "name": "label 1",
+    "start": 104.612,
+  },
+  Object {
+    "end": 476.194,
+    "name": "label 2",
+    "start": 300.448,
+  },
+  Object {
+    "end": 704.264,
+    "name": "label 3",
+    "start": 567.075,
+  },
+  Object {
+    "end": 855.455,
+    "name": "label 4",
+    "start": 704.264,
+  },
+]
+`;
+
+exports[`parses pbf 2`] = `
+Array [
+  Object {
+    "end": 189.053,
+    "name": "label 1",
+    "start": 104.612,
+  },
+  Object {
+    "end": 300.448,
+    "name": "label 2",
+    "start": 189.053,
+  },
+  Object {
+    "end": 476.194,
+    "name": "label 3",
+    "start": 300.448,
+  },
+  Object {
+    "end": 567.075,
+    "name": "label 4",
+    "start": 476.194,
+  },
+  Object {
+    "end": 704.264,
+    "name": "label 5",
+    "start": 567.075,
+  },
+  Object {
+    "end": 855.455,
+    "name": "label 6",
+    "start": 704.264,
+  },
+]
+`;
+
+exports[`parses pbf 3`] = `
+Array [
+  Object {
+    "end": 189.053,
+    "name": "A",
+    "start": 104.612,
+  },
+  Object {
+    "end": 476.194,
+    "name": "B",
+    "start": 300.448,
+  },
+  Object {
+    "end": 704.264,
+    "name": "C",
+    "start": 567.075,
+  },
+]
+`;
+
+exports[`parses pbf 4`] = `
+Array [
+  Object {
+    "end": 189.053,
+    "name": "A",
+    "start": 104.612,
+  },
+  Object {
+    "end": 476.194,
+    "name": "B",
+    "start": 300.448,
+  },
+]
+`;
+
+exports[`parses xmeml 1 1`] = `
+Array [
+  Object {
+    "end": 8.56,
+    "start": 0,
+  },
+  Object {
+    "end": 13.12,
+    "start": 8.56,
+  },
+  Object {
+    "end": 19.12,
+    "start": 13.12,
+  },
+  Object {
+    "end": 27.96,
+    "start": 19.12,
+  },
+  Object {
+    "end": 39.08,
+    "start": 27.96,
+  },
+  Object {
+    "end": 49.36,
+    "start": 39.08,
+  },
+]
+`;
+
+exports[`parses xmeml 2 1`] = `
+Array [
+  Object {
+    "end": 2033.5666666666666,
+    "start": 5.1,
+  },
+  Object {
+    "end": 3839.2833333333333,
+    "start": 3017.7,
+  },
+  Object {
+    "end": 4686.366666666667,
+    "start": 3862.9333333333334,
+  },
+  Object {
+    "end": 6310.016666666666,
+    "start": 5324.066666666667,
+  },
+  Object {
+    "end": 6959.516666666666,
+    "start": 6928.15,
+  },
+  Object {
+    "end": 8081.116666666667,
+    "start": 6985.9,
+  },
+  Object {
+    "end": 9750.05,
+    "start": 8728.066666666668,
+  },
+  Object {
+    "end": 10545.116666666667,
+    "start": 9793.316666666668,
+  },
+  Object {
+    "end": 10864.883333333333,
+    "start": 10740.633333333333,
+  },
+]
+`;

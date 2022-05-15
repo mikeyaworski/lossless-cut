@@ -4,7 +4,7 @@ const i18n = require('i18next');
 const { Menu } = electron;
 const { dialog } = electron;
 
-const { homepage, releasesPage } = require('./constants');
+const { homepage, getReleaseUrl, licensesPage } = require('./constants');
 
 module.exports = (app, mainWindow, newVersion) => {
   const menu = [
@@ -19,20 +19,20 @@ module.exports = (app, mainWindow, newVersion) => {
           async click() {
             const { canceled, filePaths } = await dialog.showOpenDialog({ properties: ['openFile', 'multiSelections'] });
             if (canceled) return;
-            mainWindow.webContents.send('file-opened', filePaths);
+            mainWindow.webContents.send('openFiles', filePaths);
           },
         },
         {
           label: i18n.t('Close'),
           accelerator: 'CmdOrCtrl+W',
           async click() {
-            mainWindow.webContents.send('close-file');
+            mainWindow.webContents.send('closeCurrentFile');
           },
         },
         {
           label: i18n.t('Close batch'),
           async click() {
-            mainWindow.webContents.send('close-batch-files');
+            mainWindow.webContents.send('closeBatchFiles');
           },
         },
         { type: 'separator' },
@@ -52,9 +52,15 @@ module.exports = (app, mainWindow, newVersion) => {
           label: i18n.t('Import project'),
           submenu: [
             {
-              label: i18n.t('LosslessCut (CSV)'),
+              label: i18n.t('Times in seconds (CSV)'),
               click() {
                 mainWindow.webContents.send('importEdlFile', 'csv');
+              },
+            },
+            {
+              label: i18n.t('Frame numbers (CSV)'),
+              click() {
+                mainWindow.webContents.send('importEdlFile', 'csv-frames');
               },
             },
             {
@@ -93,7 +99,7 @@ module.exports = (app, mainWindow, newVersion) => {
           label: i18n.t('Export project'),
           submenu: [
             {
-              label: i18n.t('LosslessCut (CSV)'),
+              label: i18n.t('Times in seconds (CSV)'),
               click() {
                 mainWindow.webContents.send('exportEdlFile', 'csv');
               },
@@ -102,6 +108,12 @@ module.exports = (app, mainWindow, newVersion) => {
               label: i18n.t('Timestamps (CSV)'),
               click() {
                 mainWindow.webContents.send('exportEdlFile', 'csv-human');
+              },
+            },
+            {
+              label: i18n.t('Frame numbers (CSV)'),
+              click() {
+                mainWindow.webContents.send('exportEdlFile', 'csv-frames');
               },
             },
             {
@@ -138,7 +150,7 @@ module.exports = (app, mainWindow, newVersion) => {
           label: i18n.t('Settings'),
           accelerator: 'CmdOrCtrl+,',
           click() {
-            mainWindow.webContents.send('openSettings');
+            mainWindow.webContents.send('toggleSettings');
           },
         },
         { type: 'separator' },
@@ -154,8 +166,21 @@ module.exports = (app, mainWindow, newVersion) => {
     {
       label: i18n.t('Edit'),
       submenu: [
-        { role: 'undo', label: i18n.t('Undo') },
-        { role: 'redo', label: i18n.t('Redo') },
+        // TODO: See https://github.com/mifi/lossless-cut/issues/610
+        // { role: 'undo', label: i18n.t('Undo') },
+        // { role: 'redo', label: i18n.t('Redo') },
+        {
+          label: i18n.t('Undo'),
+          accelerator: 'CmdOrCtrl+Z',
+          click: async () => dialog.showMessageBox({ message: 'Undo/redo from the menu isn\'t currently working. Please use the keyboard shortcuts instead.' }),
+        },
+        {
+          label: i18n.t('Redo'),
+          accelerator: 'CmdOrCtrl+Shift+Z',
+          click: async () => dialog.showMessageBox({ message: 'Undo/redo from the menu isn\'t currently working. Please use the keyboard shortcuts instead.' }),
+        },
+
+
         { type: 'separator' },
         { role: 'cut', label: i18n.t('Cut') },
         { role: 'copy', label: i18n.t('Copy') },
@@ -192,7 +217,25 @@ module.exports = (app, mainWindow, newVersion) => {
             {
               label: i18n.t('Invert all segments on timeline'),
               click() {
-                mainWindow.webContents.send('invertAllCutSegments');
+                mainWindow.webContents.send('invertAllSegments');
+              },
+            },
+            {
+              label: i18n.t('Fill gaps between segments'),
+              click() {
+                mainWindow.webContents.send('fillSegmentsGaps');
+              },
+            },
+            {
+              label: i18n.t('Shuffle segments order'),
+              click() {
+                mainWindow.webContents.send('shuffleSegments');
+              },
+            },
+            {
+              label: i18n.t('Shift all segments on timeline'),
+              click() {
+                mainWindow.webContents.send('shiftAllSegmentTimes');
               },
             },
           ],
@@ -203,7 +246,7 @@ module.exports = (app, mainWindow, newVersion) => {
             {
               label: i18n.t('Extract all tracks'),
               click() {
-                mainWindow.webContents.send('extract-all-streams');
+                mainWindow.webContents.send('extractAllStreams');
               },
             },
             {
@@ -237,23 +280,24 @@ module.exports = (app, mainWindow, newVersion) => {
       label: i18n.t('Tools'),
       submenu: [
         {
-          label: i18n.t('Merge files'),
+          label: i18n.t('Merge/concatenate files'),
           click() {
-            mainWindow.webContents.send('show-merge-dialog', true);
-          },
-        },
-        {
-          label: i18n.t('Batch convert to supported format'),
-          click() {
-            mainWindow.webContents.send('batchConvertFriendlyFormat');
+            mainWindow.webContents.send('concatCurrentBatch');
           },
         },
         {
           label: i18n.t('Set custom start offset/timecode'),
           click() {
-            mainWindow.webContents.send('set-start-offset', true);
+            mainWindow.webContents.send('askSetStartTimeOffset');
           },
         },
+        {
+          label: i18n.t('Detect black scenes'),
+          click() {
+            mainWindow.webContents.send('detectBlackScenes');
+          },
+        },
+        { type: 'separator' },
         { role: 'toggleDevTools', label: i18n.t('Toggle Developer Tools') },
       ],
     },
@@ -264,7 +308,7 @@ module.exports = (app, mainWindow, newVersion) => {
         {
           label: i18n.t('Help and shortcuts'),
           click() {
-            mainWindow.webContents.send('openHelp');
+            mainWindow.webContents.send('toggleHelp');
           },
         },
         {
@@ -272,6 +316,10 @@ module.exports = (app, mainWindow, newVersion) => {
           click() {
             mainWindow.webContents.send('openAbout');
           },
+        },
+        {
+          label: i18n.t('Licenses'),
+          click() { electron.shell.openExternal(licensesPage); },
         },
         {
           label: i18n.t('Learn More'),
@@ -291,7 +339,7 @@ module.exports = (app, mainWindow, newVersion) => {
       submenu: [
         {
           label: i18n.t('Download {{version}}', { version: newVersion }),
-          click() { electron.shell.openExternal(releasesPage); },
+          click() { electron.shell.openExternal(getReleaseUrl(newVersion)); },
         },
       ],
     });

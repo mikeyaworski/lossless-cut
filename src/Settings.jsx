@@ -1,57 +1,78 @@
-import React, { memo } from 'react';
-import { FaYinYang } from 'react-icons/fa';
-import { Button, Table, NumericalIcon, KeyIcon, FolderCloseIcon, DocumentIcon, TimeIcon, Checkbox, Select } from 'evergreen-ui';
+import React, { memo, useCallback, useMemo } from 'react';
+import { FaYinYang, FaKeyboard } from 'react-icons/fa';
+import { CogIcon, Button, Table, NumericalIcon, KeyIcon, FolderCloseIcon, DocumentIcon, TimeIcon, Checkbox, Select } from 'evergreen-ui';
 import { useTranslation } from 'react-i18next';
 
+import CaptureFormatButton from './components/CaptureFormatButton';
+import AutoExportToggler from './components/AutoExportToggler';
+import useUserSettings from './hooks/useUserSettings';
+import { askForFfPath } from './dialogs';
+import { isMasBuild } from './util';
+
+
+// https://www.electronjs.org/docs/api/locales
+// See i18n.js
+const langNames = {
+  en: 'English',
+  cs: 'Čeština',
+  de: 'Deutsch',
+  es: 'Español',
+  fr: 'Français',
+  it: 'Italiano',
+  nl: 'Nederlands',
+  nb: 'Norsk',
+  pl: 'Polski',
+  pt: 'Português',
+  pt_BR: 'português do Brasil',
+  fi: 'Suomi',
+  ru: 'русский',
+  // sr: 'Cрпски',
+  tr: 'Türkçe',
+  vi: 'Tiếng Việt',
+  ja: '日本語',
+  zh: '中文',
+  zh_Hant: '繁體中文',
+  zh_Hans: '简体中文',
+  ko: '한국어',
+};
+
+// eslint-disable-next-line react/jsx-props-no-spreading
+const Row = (props) => <Table.Row height="auto" paddingY={12} {...props} />;
+// eslint-disable-next-line react/jsx-props-no-spreading
+const KeyCell = (props) => <Table.TextCell textProps={{ whiteSpace: 'auto' }} {...props} />;
 
 const Settings = memo(({
-  changeOutDir, customOutDir, keyframeCut, setKeyframeCut, invertCutSegments, setInvertCutSegments,
-  autoSaveProjectFile, setAutoSaveProjectFile, timecodeShowFrames, setTimecodeShowFrames, askBeforeClose, setAskBeforeClose,
-  askBeforeDelete, setAskBeforeDelete,
-  AutoExportToggler, renderCaptureFormatButton, onTunerRequested, language, setLanguage,
-  invertTimelineScroll, setInvertTimelineScroll, ffmpegExperimental, setFfmpegExperimental,
-  enableAskForImportChapters, setEnableAskForImportChapters, enableAskForFileOpenAction, setEnableAskForFileOpenAction,
-  hideNotifications, setHideNotifications, autoLoadTimecode, setAutoLoadTimecode,
-  enableTransferTimestamps, setEnableTransferTimestamps,
+  onTunerRequested,
+  onKeyboardShortcutsDialogRequested,
 }) => {
   const { t } = useTranslation();
 
-  // eslint-disable-next-line react/jsx-props-no-spreading
-  const Row = (props) => <Table.Row height="auto" paddingY={12} {...props} />;
-  // eslint-disable-next-line react/jsx-props-no-spreading
-  const KeyCell = (props) => <Table.TextCell textProps={{ whiteSpace: 'auto' }} {...props} />;
+  const { customOutDir, changeOutDir, keyframeCut, toggleKeyframeCut, timecodeFormat, setTimecodeFormat, invertCutSegments, setInvertCutSegments, askBeforeDelete, setAskBeforeDelete, askBeforeClose, setAskBeforeClose, enableAskForImportChapters, setEnableAskForImportChapters, enableAskForFileOpenAction, setEnableAskForFileOpenAction, autoSaveProjectFile, setAutoSaveProjectFile, invertTimelineScroll, setInvertTimelineScroll, language, setLanguage, ffmpegExperimental, setFfmpegExperimental, hideNotifications, setHideNotifications, autoLoadTimecode, setAutoLoadTimecode, enableTransferTimestamps, setEnableTransferTimestamps, enableAutoHtml5ify, setEnableAutoHtml5ify, customFfPath, setCustomFfPath, storeProjectInWorkingDir, setStoreProjectInWorkingDir } = useUserSettings();
 
-  function onLangChange(e) {
+  const onLangChange = useCallback((e) => {
     const { value } = e.target;
     const l = value !== '' ? value : undefined;
     setLanguage(l);
-  }
+  }, [setLanguage]);
 
-  // https://www.electronjs.org/docs/api/locales
-  // See i18n.js
-  const langNames = {
-    en: 'English',
-    cs: 'Čeština',
-    de: 'Deutsch',
-    es: 'Español',
-    fr: 'Français',
-    it: 'Italiano',
-    nl: 'Nederlands',
-    nb: 'Norsk',
-    pl: 'Polski',
-    pt: 'Português',
-    pt_BR: 'português do Brasil',
-    fi: 'Suomi',
-    ru: 'русский',
-    // sr: 'Cрпски',
-    tr: 'Türkçe',
-    vi: 'Tiếng Việt',
-    ja: '日本語',
-    zh: '中文',
-    zh_Hant: '繁體中文',
-    zh_Hans: '简体中文',
-    ko: '한국어',
-  };
+  const timecodeFormatOptions = useMemo(() => ({
+    frameCount: t('Frame counts'),
+    timecodeWithDecimalFraction: t('Millisecond fractions'),
+    timecodeWithFramesFraction: t('Frame fractions'),
+  }), [t]);
+
+  const onTimecodeFormatClick = useCallback(() => {
+    const keys = Object.keys(timecodeFormatOptions);
+    let index = keys.indexOf(timecodeFormat);
+    if (index === -1 || index >= keys.length - 1) index = 0;
+    else index += 1;
+    setTimecodeFormat(keys[index]);
+  }, [setTimecodeFormat, timecodeFormat, timecodeFormatOptions]);
+
+  const changeCustomFfPath = useCallback(async () => {
+    const newCustomFfPath = await askForFfPath(customFfPath);
+    setCustomFfPath(newCustomFfPath);
+  }, [customFfPath, setCustomFfPath]);
 
   return (
     <>
@@ -66,9 +87,16 @@ const Settings = memo(({
       </Row>
 
       <Row>
+        <KeyCell>{t('Keyboard & mouse shortcuts')}</KeyCell>
+        <Table.TextCell>
+          <Button iconBefore={<FaKeyboard />} onClick={onKeyboardShortcutsDialogRequested}>{t('Keyboard & mouse shortcuts')}</Button>
+        </Table.TextCell>
+      </Row>
+
+      <Row>
         <KeyCell>
           {t('Working directory')}<br />
-          {t('This is where working files, exported files, project files (LLC) are stored.')}
+          {t('This is where working files and exported files are stored.')}
         </KeyCell>
         <Table.TextCell>
           <Button iconBefore={customOutDir ? FolderCloseIcon : DocumentIcon} onClick={changeOutDir}>
@@ -77,6 +105,43 @@ const Settings = memo(({
           <div>{customOutDir}</div>
         </Table.TextCell>
       </Row>
+
+      <Row>
+        <KeyCell>
+          {t('Auto save project file?')}<br />
+        </KeyCell>
+        <Table.TextCell>
+          <Checkbox
+            label={t('Auto save project')}
+            checked={autoSaveProjectFile}
+            onChange={e => setAutoSaveProjectFile(e.target.checked)}
+          />
+        </Table.TextCell>
+      </Row>
+
+      <Row>
+        <KeyCell>{t('Store project file (.llc) in the working directory or next to loaded media file?')}</KeyCell>
+        <Table.TextCell>
+          <Button iconBefore={storeProjectInWorkingDir ? FolderCloseIcon : DocumentIcon} disabled={!autoSaveProjectFile} onClick={() => setStoreProjectInWorkingDir((v) => !v)}>
+            {storeProjectInWorkingDir ? t('Store in working directory') : t('Store next to media file')}
+          </Button>
+        </Table.TextCell>
+      </Row>
+
+      {!isMasBuild && (
+        <Row>
+          <KeyCell>
+            {t('Custom FFmpeg directory (experimental)')}<br />
+            {t('This allows you to specify custom FFmpeg and FFprobe binaries to use. Make sure the "ffmpeg" and "ffprobe" executables exist in the same directory, and then select the directory.')}
+          </KeyCell>
+          <Table.TextCell>
+            <Button iconBefore={CogIcon} onClick={changeCustomFfPath}>
+              {customFfPath ? t('Using external ffmpeg') : t('Using built-in ffmpeg')}
+            </Button>
+            <div>{customFfPath}</div>
+          </Table.TextCell>
+        </Row>
+      )}
 
       <Row>
         <KeyCell>{t('Set file modification date/time of output files to:')}</KeyCell>
@@ -94,8 +159,8 @@ const Settings = memo(({
           <b>{t('Normal cut')}</b>: {t('Accurate time but could leave an empty portion at the beginning of the video. Equiv to')} <i>ffmpeg -i -ss ...</i><br />
         </KeyCell>
         <Table.TextCell>
-          <Button iconBefore={keyframeCut === 'keyframe' ? KeyIcon : undefined} onClick={() => setKeyframeCut(keyframeCut === 'keyframe' ? 'normal' : 'keyframe')}>
-            {keyframeCut === 'keyframe' ? t('Keyframe cut') : t('Normal cut')}
+          <Button iconBefore={keyframeCut ? KeyIcon : undefined} onClick={() => toggleKeyframeCut()}>
+            {keyframeCut ? t('Keyframe cut') : t('Normal cut')}
           </Button>
         </Table.TextCell>
       </Row>
@@ -136,32 +201,18 @@ const Settings = memo(({
 
       <Row>
         <KeyCell>
-          {t('Auto save project file?')}<br />
-          {t('The project will be stored alongside the output files as a project LLC file')}
-        </KeyCell>
-        <Table.TextCell>
-          <Checkbox
-            label={t('Auto save project')}
-            checked={autoSaveProjectFile}
-            onChange={e => setAutoSaveProjectFile(e.target.checked)}
-          />
-        </Table.TextCell>
-      </Row>
-
-      <Row>
-        <KeyCell>
           {t('Snapshot capture format')}
         </KeyCell>
         <Table.TextCell>
-          {renderCaptureFormatButton()}
+          <CaptureFormatButton showIcon />
         </Table.TextCell>
       </Row>
 
       <Row>
         <KeyCell>{t('In timecode show')}</KeyCell>
         <Table.TextCell>
-          <Button iconBefore={timecodeShowFrames ? NumericalIcon : TimeIcon} onClick={() => setTimecodeShowFrames((v) => !v)}>
-            {timecodeShowFrames ? t('Frame numbers') : t('Millisecond fractions')}
+          <Button iconBefore={timecodeFormat === 'frameCount' ? NumericalIcon : TimeIcon} onClick={onTimecodeFormatClick}>
+            {timecodeFormatOptions[timecodeFormat]}
           </Button>
         </Table.TextCell>
       </Row>
@@ -241,6 +292,18 @@ const Settings = memo(({
           />
         </Table.TextCell>
       </Row>
+
+      <Row>
+        <KeyCell>{t('Try to automatically convert to supported format when opening unsupported file?')}</KeyCell>
+        <Table.TextCell>
+          <Checkbox
+            label={t('Auto convert to supported format')}
+            checked={enableAutoHtml5ify}
+            onChange={e => setEnableAutoHtml5ify(e.target.checked)}
+          />
+        </Table.TextCell>
+      </Row>
+
 
       <Row>
         <KeyCell>{t('Hide informational notifications?')}</KeyCell>

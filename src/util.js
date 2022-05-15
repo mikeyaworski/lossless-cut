@@ -1,17 +1,23 @@
 import Swal from 'sweetalert2';
 import i18n from 'i18next';
 import lodashTemplate from 'lodash/template';
+import pMap from 'p-map';
 
 const { dirname, parse: parsePath, join, basename, extname, isAbsolute, resolve } = window.require('path');
 const fs = window.require('fs-extra');
 const open = window.require('open');
 const os = window.require('os');
+const trash = window.require('trash');
 
-const { readdir } = fs;
+const { readdir, unlink } = fs;
+
+export function getFileDir(filePath) {
+  return filePath ? dirname(filePath) : undefined;
+}
 
 export function getOutDir(customOutDir, filePath) {
   if (customOutDir) return customOutDir;
-  if (filePath) return dirname(filePath);
+  if (filePath) return getFileDir(filePath);
   return undefined;
 }
 
@@ -21,7 +27,7 @@ export function getFileBaseName(filePath) {
   return parsed.name;
 }
 
-export function getOutPath(customOutDir, filePath, nameSuffix) {
+export function getOutPath({ customOutDir, filePath, nameSuffix }) {
   if (!filePath) return undefined;
   return join(getOutDir(customOutDir, filePath), `${getFileBaseName(filePath)}-${nameSuffix}`);
 }
@@ -54,6 +60,15 @@ export async function checkDirWriteAccess(dirPath) {
 
 export async function pathExists(pathIn) {
   return fs.pathExists(pathIn);
+}
+
+export async function getPathReadAccessError(pathIn) {
+  try {
+    await fs.access(pathIn, fs.constants.R_OK);
+    return undefined;
+  } catch (err) {
+    return err.code;
+  }
 }
 
 export async function dirExists(dirPath) {
@@ -131,23 +146,14 @@ export function dragPreventer(ev) {
   ev.preventDefault();
 }
 
-// With these codecs, the player will not give a playback error, but instead only play audio
-export function doesPlayerSupportFile(streams) {
-  const videoStreams = streams.filter(s => s.codec_type === 'video');
-  // Don't check audio formats, assume all is OK
-  if (videoStreams.length === 0) return true;
-  // If we have at least one video that is NOT of the unsupported formats, assume the player will be able to play it natively
-  // https://github.com/mifi/lossless-cut/issues/595
-  return videoStreams.some(s => !['hevc', 'prores', 'mpeg4'].includes(s.codec_name));
-}
-
 export const isMasBuild = window.process.mas;
 export const isWindowsStoreBuild = window.process.windowsStore;
 export const isStoreBuild = isMasBuild || isWindowsStoreBuild;
 
 export const isDurationValid = (duration) => Number.isFinite(duration) && duration > 0;
 
-const platform = os.platform();
+export const platform = os.platform();
+export const arch = os.arch();
 
 export const isWindows = platform === 'win32';
 export const isMac = platform === 'darwin';
@@ -162,7 +168,16 @@ export function getExtensionForFormat(format) {
 }
 
 export function getOutFileExtension({ isCustomFormatSelected, outFormat, filePath }) {
-  return isCustomFormatSelected ? `.${getExtensionForFormat(outFormat)}` : extname(filePath);
+  if (!isCustomFormatSelected) {
+    const ext = extname(filePath);
+    // QuickTime is quirky about the file extension of mov files (has to be .mov)
+    // https://github.com/mifi/lossless-cut/issues/1075#issuecomment-1072084286
+    const hasMovIncorrectExtension = outFormat === 'mov' && ext.toLowerCase() !== '.mov';
+
+    // OK, just keep the current extension. Because most players will not care about the extension
+    if (!hasMovIncorrectExtension) return extname(filePath);
+  }
+  return `.${getExtensionForFormat(outFormat)}`;
 }
 
 // This is used as a fallback and so it has to always generate unique file names
@@ -179,7 +194,11 @@ export function generateSegFileName({ template, inputFileNameWithoutExt, segSuff
     SEG_LABEL: segLabel,
     CUT_FROM: cutFrom,
     CUT_TO: cutTo,
-    SEG_TAGS: Object.fromEntries(Object.entries(tags).map(([key, value]) => [`${key.toLocaleUpperCase('en-US')}`, value])),
+    SEG_TAGS: {
+      // allow both original case and uppercase
+      ...tags,
+      ...Object.fromEntries(Object.entries(tags).map(([key, value]) => [`${key.toLocaleUpperCase('en-US')}`, value])),
+    },
   };
   return compiled(data);
 }
@@ -194,7 +213,7 @@ export const html5dummySuffix = 'dummy';
 
 export async function findExistingHtml5FriendlyFile(fp, cod) {
   // The order is the priority we will search:
-  const suffixes = ['slowest', 'slow-audio', 'slow', 'fast-audio', 'fast', 'fastest-audio', 'fastest-audio-remux', html5dummySuffix];
+  const suffixes = ['slowest', 'slow-audio', 'slow', 'fast-audio-remux', 'fast-audio', 'fast', 'fastest-audio', 'fastest-audio-remux', html5dummySuffix];
   const prefix = `${getFileBaseName(fp)}-${html5ifiedPrefix}`;
 
   const outDir = getOutDir(cod, fp);
@@ -222,4 +241,83 @@ export async function findExistingHtml5FriendlyFile(fp, cod) {
     path: join(outDir, entry),
     usingDummyVideo: ['fastest-audio', 'fastest-audio-remux', html5dummySuffix].includes(suffix),
   };
+}
+
+export function getHtml5ifiedPath(cod, fp, type) {
+  // See also inside ffmpegHtml5ify
+  const ext = (isMac && ['slowest', 'slow', 'slow-audio'].includes(type)) ? 'mp4' : 'mkv';
+  return getOutPath({ customOutDir: cod, filePath: fp, nameSuffix: `${html5ifiedPrefix}${type}.${ext}` });
+}
+
+export async function deleteFiles({ toDelete, paths: { previewFilePath, sourceFilePath, projectFilePath } }) {
+  const failedToTrashFiles = [];
+
+  if (toDelete.tmpFiles && previewFilePath) {
+    try {
+      await trash(previewFilePath);
+    } catch (err) {
+      console.error(err);
+      failedToTrashFiles.push(previewFilePath);
+    }
+  }
+  if (toDelete.projectFile && projectFilePath) {
+    try {
+      // throw new Error('test');
+      await trash(projectFilePath);
+    } catch (err) {
+      console.error(err);
+      failedToTrashFiles.push(projectFilePath);
+    }
+  }
+  if (toDelete.sourceFile) {
+    try {
+      await trash(sourceFilePath);
+    } catch (err) {
+      console.error(err);
+      failedToTrashFiles.push(sourceFilePath);
+    }
+  }
+
+  if (failedToTrashFiles.length === 0) return; // All good!
+
+  const { value } = await Swal.fire({
+    icon: 'warning',
+    text: i18n.t('Unable to move file to trash. Do you want to permanently delete it?'),
+    confirmButtonText: i18n.t('Permanently delete'),
+    showCancelButton: true,
+  });
+
+  if (value) {
+    await pMap(failedToTrashFiles, async (path) => unlink(path), { concurrency: 1 });
+  }
+}
+
+export const deleteDispositionValue = 'llc_disposition_remove';
+
+export const mirrorTransform = 'matrix(-1, 0, 0, 1, 0, 0)';
+
+// A bit hacky but it works, unless someone has a file called "No space left on device" ( ͡° ͜ʖ ͡°)
+export const isOutOfSpaceError = (err) => (
+  err && (err.exitCode === 1 || err.code === 'ENOENT')
+  && typeof err.stderr === 'string' && err.stderr.includes('No space left on device')
+);
+
+// https://stackoverflow.com/a/2450976/6519037
+export function shuffleArray(arrayIn) {
+  const array = [...arrayIn];
+  let currentIndex = array.length;
+  let randomIndex;
+
+  // While there remain elements to shuffle...
+  while (currentIndex !== 0) {
+    // Pick a remaining element...
+    randomIndex = Math.floor(Math.random() * currentIndex);
+    currentIndex -= 1;
+
+    // And swap it with the current element.
+    [array[currentIndex], array[randomIndex]] = [
+      array[randomIndex], array[currentIndex]];
+  }
+
+  return array;
 }

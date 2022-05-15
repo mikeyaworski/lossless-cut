@@ -1,18 +1,19 @@
 import { v4 as uuidv4 } from 'uuid';
 import sortBy from 'lodash/sortBy';
 
-import { generateColor } from './util/colors';
-
-export const createSegment = ({ start, end, name, tags } = {}) => ({
+export const createSegment = ({ start, end, name, tags, segColorIndex } = {}) => ({
   start,
   end,
   name: name || '',
-  color: generateColor(),
   segId: uuidv4(),
-  tags, // tags is an optional object (key-value)
-});
+  segColorIndex,
 
-export const createInitialCutSegments = () => [createSegment()];
+  // `tags` is an optional object (key-value). Values must always be string
+  // See https://github.com/mifi/lossless-cut/issues/879
+  tags: tags != null && typeof tags === 'object'
+    ? Object.fromEntries(Object.entries(tags).map(([key, value]) => [key, String(value)]))
+    : undefined,
+});
 
 // Because segments could have undefined start / end
 // (meaning extend to start of timeline or end duration)
@@ -40,23 +41,30 @@ export const getSegmentTags = (segment) => (segment.tags || {});
 
 export const sortSegments = (segments) => sortBy(segments, 'start');
 
-export function invertSegments(sortedCutSegments, duration) {
+export function hasAnySegmentOverlap(sortedSegments) {
+  if (sortedSegments.length < 1) return false;
+
+  return sortedSegments.some((cutSegment, i) => {
+    if (i === 0) return false;
+    const previousSeg = sortedSegments[i - 1];
+    return previousSeg.end > cutSegment.start;
+  });
+}
+
+export function invertSegments(sortedCutSegments, includeFirstSegment, includeLastSegment, duration) {
   if (sortedCutSegments.length < 1) return undefined;
 
-  const foundOverlap = sortedCutSegments.some((cutSegment, i) => {
-    if (i === 0) return false;
-    return sortedCutSegments[i - 1].end > cutSegment.start;
-  });
-
-  if (foundOverlap) return undefined;
+  if (hasAnySegmentOverlap(sortedCutSegments)) return undefined;
 
   const ret = [];
 
-  if (sortedCutSegments[0].start > 0) {
-    ret.push({
-      start: 0,
-      end: sortedCutSegments[0].start,
-    });
+  if (includeFirstSegment) {
+    if (sortedCutSegments[0].start > 0) {
+      ret.push({
+        start: 0,
+        end: sortedCutSegments[0].start,
+      });
+    }
   }
 
   sortedCutSegments.forEach((cutSegment, i) => {
@@ -67,13 +75,29 @@ export function invertSegments(sortedCutSegments, duration) {
     });
   });
 
-  const last = sortedCutSegments[sortedCutSegments.length - 1];
-  if (last.end < duration || duration == null) {
-    ret.push({
-      start: last.end,
-      end: duration,
-    });
+  if (includeLastSegment) {
+    const last = sortedCutSegments[sortedCutSegments.length - 1];
+    if (last.end < duration || duration == null) {
+      ret.push({
+        start: last.end,
+        end: duration,
+      });
+    }
   }
 
-  return ret;
+  // Filter out zero length resulting segments
+  // https://github.com/mifi/lossless-cut/issues/909
+  return ret.filter(({ start, end }) => end == null || start == null || end > start);
+}
+
+// because chapters need to be contiguous, we need to insert gaps in-between
+export function convertSegmentsToChapters(sortedSegments) {
+  if (sortedSegments.length < 1) return [];
+  if (hasAnySegmentOverlap(sortedSegments)) throw new Error('Segments cannot overlap');
+
+  sortedSegments.map((segment) => ({ start: segment.start, end: segment.end, name: segment.name }));
+  const invertedSegments = invertSegments(sortedSegments, true, false);
+
+  // inverted segments will be "gap" segments. Merge together with normal segments
+  return sortSegments([...sortedSegments, ...invertedSegments]);
 }

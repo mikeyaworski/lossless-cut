@@ -2,6 +2,10 @@ const electron = require('electron'); // eslint-disable-line
 const isDev = require('electron-is-dev');
 const unhandled = require('electron-unhandled');
 const i18n = require('i18next');
+const debounce = require('lodash/debounce');
+const yargsParser = require('yargs-parser');
+const JSON5 = require('json5');
+
 
 const menu = require('./menu');
 const configStore = require('./configStore');
@@ -10,7 +14,7 @@ const { checkNewVersion } = require('./update-checker');
 
 require('./i18n');
 
-const { app } = electron;
+const { app, ipcMain } = electron;
 const { BrowserWindow } = electron;
 
 // https://github.com/electron/electron/issues/18397
@@ -22,6 +26,8 @@ unhandled({
 
 app.name = 'LosslessCut';
 
+let filesToOpen = [];
+
 // Keep a global reference of the window object, if you don't, the window will
 // be closed automatically when the JavaScript object is garbage collected.
 let mainWindow;
@@ -30,11 +36,37 @@ let askBeforeClose = false;
 let rendererReady = false;
 let newVersion;
 
-const openFiles = (paths) => mainWindow.webContents.send('file-opened', paths);
-const openFile = (path) => openFiles([path]);
+const openFiles = (paths) => mainWindow.webContents.send('openFiles', paths);
+
+
+// https://github.com/electron/electron/issues/526#issuecomment-563010533
+function getSizeOptions() {
+  const bounds = configStore.get('windowBounds');
+  const options = {};
+  if (bounds) {
+    const area = electron.screen.getDisplayMatching(bounds).workArea;
+    // If the saved position still valid (the window is entirely inside the display area), use it.
+    if (
+      bounds.x >= area.x
+      && bounds.y >= area.y
+      && bounds.x + bounds.width <= area.x + area.width
+      && bounds.y + bounds.height <= area.y + area.height
+    ) {
+      options.x = bounds.x;
+      options.y = bounds.y;
+    }
+    // If the saved size is still valid, use it.
+    if (bounds.width <= area.width || bounds.height <= area.height) {
+      options.width = bounds.width;
+      options.height = bounds.height;
+    }
+  }
+  return options;
+}
 
 function createWindow() {
   mainWindow = new BrowserWindow({
+    ...getSizeOptions(),
     darkTheme: true,
     webPreferences: {
       enableRemoteModule: true,
@@ -74,10 +106,33 @@ function createWindow() {
       e.preventDefault();
     }
   });
+
+  const debouncedSaveWindowState = debounce(() => {
+    if (!mainWindow) return;
+    const { x, y, width, height } = mainWindow.getNormalBounds();
+    configStore.set('windowBounds', { x, y, width, height });
+  }, 500);
+
+  mainWindow.on('resize', debouncedSaveWindowState);
+  mainWindow.on('move', debouncedSaveWindowState);
 }
 
 function updateMenu() {
   menu(app, mainWindow, newVersion);
+}
+
+
+// https://github.com/electron/electron/issues/3657
+// https://github.com/mifi/lossless-cut/issues/357
+// https://github.com/mifi/lossless-cut/issues/639
+// https://github.com/mifi/lossless-cut/issues/591
+function parseCliArgs() {
+  const ignoreFirstArgs = isDev ? 2 : 1;
+  // production: First arg is the LosslessCut executable
+  // dev: First 2 args are electron and the electron.js
+  const argsWithoutAppName = process.argv.length > ignoreFirstArgs ? process.argv.slice(ignoreFirstArgs) : [];
+
+  return yargsParser(argsWithoutAppName);
 }
 
 // This method will be called when Electron has finished
@@ -96,14 +151,25 @@ app.on('ready', async () => {
 
   await configStore.init();
 
+  const argv = parseCliArgs();
+  console.log('CLI arguments', argv);
+  filesToOpen = argv._;
+  const { settingsJson } = argv;
+
+  if (settingsJson != null) {
+    console.log('initializing settings', settingsJson);
+    Object.entries(JSON5.parse(settingsJson)).forEach(([key, value]) => {
+      configStore.set(key, value);
+    });
+  }
+
   if (isDev) {
     const { default: installExtension, REACT_DEVELOPER_TOOLS } = require('electron-devtools-installer'); // eslint-disable-line global-require,import/no-extraneous-dependencies
 
     installExtension(REACT_DEVELOPER_TOOLS)
-      .then(name => console.log(`Added Extension: ${name}`))
-      .catch(err => console.log('An error occurred: ', err));
+      .then(name => console.log('Added Extension', name))
+      .catch(err => console.log('Failed to add extension', err));
   }
-
 
   createWindow();
   updateMenu();
@@ -128,37 +194,23 @@ app.on('activate', () => {
   }
 });
 
-let openFileInitial;
-
-electron.ipcMain.on('renderer-ready', () => {
+ipcMain.on('renderer-ready', () => {
   rendererReady = true;
-  const ignoreFirstArgs = isDev ? 2 : 1;
-  // production: First arg is the LosslessCut executable
-  // dev: First 2 args are electron and the electron.js
-
-  // https://github.com/electron/electron/issues/3657
-  // https://github.com/mifi/lossless-cut/issues/357
-  // https://github.com/mifi/lossless-cut/issues/639
-  // https://github.com/mifi/lossless-cut/issues/591
-  const filesToOpen = process.argv.length > ignoreFirstArgs
-    ? process.argv.slice(ignoreFirstArgs).filter((arg) => arg && !arg.startsWith('-'))
-    : [];
-
   if (filesToOpen.length > 0) openFiles(filesToOpen);
-  else if (openFileInitial) openFile(openFileInitial);
 });
 
 // Mac OS open with LosslessCut
 app.on('open-file', (event, path) => {
-  if (rendererReady) openFile(path);
-  else openFileInitial = path;
+  if (rendererReady) openFiles([path]);
+  else filesToOpen = [path];
+  event.preventDefault(); // recommended in docs https://www.electronjs.org/docs/latest/api/app#event-open-file-macos
 });
 
-electron.ipcMain.on('setAskBeforeClose', (e, val) => {
+ipcMain.on('setAskBeforeClose', (e, val) => {
   askBeforeClose = val;
 });
 
-electron.ipcMain.on('setLanguage', (e, language) => {
+ipcMain.on('setLanguage', (e, language) => {
   i18n.changeLanguage(language).then(() => updateMenu()).catch(console.error);
 });
 
