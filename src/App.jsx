@@ -2031,6 +2031,17 @@ const App = memo(() => {
   const batchFilePaths = useMemo(() => batchFiles.map((f) => f.path), [batchFiles]);
 
   const batchLoadPaths = useCallback((newPaths, append) => {
+    // Attempt to resolve any shortcuts to their target files before processing
+    // eslint-disable-next-line no-param-reassign
+    newPaths = newPaths.map(path => {
+      try {
+        const { target } = electron.shell.readShortcutLink(path);
+        if (target) return target;
+      } catch {
+        // Intentionally empty
+      }
+      return path;
+    });
     setBatchFiles((existingFiles) => {
       const mapPathsToFiles = (paths) => paths.map((path) => ({ path, name: basename(path) }));
       if (append) {
