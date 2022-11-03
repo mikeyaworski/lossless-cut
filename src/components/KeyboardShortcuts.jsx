@@ -140,8 +140,8 @@ const KeyboardShortcuts = memo(({
         ],
       },
       actionsMap: {
-        toggleHelp: {
-          name: t('Show/hide help screen'),
+        toggleLastCommands: {
+          name: t('Last ffmpeg commands'),
         },
         toggleKeyboardShortcuts: {
           name: t('Keyboard & mouse shortcuts'),
@@ -300,6 +300,10 @@ const KeyboardShortcuts = memo(({
           name: t('Create num segments'),
           category: segmentsAndCutpointsCategory,
         },
+        createRandomSegments: {
+          name: t('Create random segments'),
+          category: segmentsAndCutpointsCategory,
+        },
         shuffleSegments: {
           name: t('Shuffle segments order'),
           category: segmentsAndCutpointsCategory,
@@ -364,6 +368,10 @@ const KeyboardShortcuts = memo(({
         },
         captureSnapshot: {
           name: t('Capture snapshot'),
+          category: outputCategory,
+        },
+        captureSnapshotAsCoverArt: {
+          name: t('Set current frame as cover art'),
           category: outputCategory,
         },
         extractCurrentSegmentFramesAsImages: {

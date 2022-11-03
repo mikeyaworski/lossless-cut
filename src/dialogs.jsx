@@ -169,6 +169,13 @@ export async function showDiskFull() {
   });
 }
 
+export async function showRefuseToOverwrite() {
+  await Swal.fire({
+    icon: 'warning',
+    text: i18n.t('Output file already exists, refusing to overwrite. You can turn on overwriting in settings.'),
+  });
+}
+
 export async function askForImportChapters() {
   const { value } = await Swal.fire({
     icon: 'question',
@@ -438,7 +445,7 @@ export async function showCutFailedDialog({ detectedFileFormat }) {
         <li><Trans>Try both <b>Normal cut</b> and <b>Keyframe cut</b></Trans></li>
         <li><Trans>Set a different <b>Working directory</b></Trans></li>
         <li><Trans>Try with a <b>Different file</b></Trans></li>
-        <li><Trans>See <b>Help</b></Trans></li>
+        <li><Trans>See <b>Help</b></Trans> menu</li>
         <li><Trans>If nothing helps, you can send an <b>Error report</b></Trans></li>
       </ol>
     </div>

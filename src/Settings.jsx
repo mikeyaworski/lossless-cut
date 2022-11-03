@@ -9,6 +9,8 @@ import useUserSettings from './hooks/useUserSettings';
 import { askForFfPath } from './dialogs';
 import { isMasBuild } from './util';
 
+import { keyMap } from './hooks/useTimelineScroll';
+
 
 // https://www.electronjs.org/docs/api/locales
 // See i18n.js
@@ -47,7 +49,7 @@ const Settings = memo(({
 }) => {
   const { t } = useTranslation();
 
-  const { customOutDir, changeOutDir, keyframeCut, toggleKeyframeCut, timecodeFormat, setTimecodeFormat, invertCutSegments, setInvertCutSegments, askBeforeDelete, setAskBeforeDelete, askBeforeClose, setAskBeforeClose, enableAskForImportChapters, setEnableAskForImportChapters, enableAskForFileOpenAction, setEnableAskForFileOpenAction, autoSaveProjectFile, setAutoSaveProjectFile, invertTimelineScroll, setInvertTimelineScroll, language, setLanguage, ffmpegExperimental, setFfmpegExperimental, hideNotifications, setHideNotifications, autoLoadTimecode, setAutoLoadTimecode, enableTransferTimestamps, setEnableTransferTimestamps, enableAutoHtml5ify, setEnableAutoHtml5ify, customFfPath, setCustomFfPath, storeProjectInWorkingDir, setStoreProjectInWorkingDir } = useUserSettings();
+  const { customOutDir, changeOutDir, keyframeCut, toggleKeyframeCut, timecodeFormat, setTimecodeFormat, invertCutSegments, setInvertCutSegments, askBeforeDelete, setAskBeforeDelete, askBeforeClose, setAskBeforeClose, enableAskForImportChapters, setEnableAskForImportChapters, enableAskForFileOpenAction, setEnableAskForFileOpenAction, autoSaveProjectFile, setAutoSaveProjectFile, invertTimelineScroll, setInvertTimelineScroll, language, setLanguage, ffmpegExperimental, setFfmpegExperimental, hideNotifications, setHideNotifications, autoLoadTimecode, setAutoLoadTimecode, enableTransferTimestamps, setEnableTransferTimestamps, enableAutoHtml5ify, setEnableAutoHtml5ify, customFfPath, setCustomFfPath, storeProjectInWorkingDir, setStoreProjectInWorkingDir, enableOverwriteOutput, setEnableOverwriteOutput, mouseWheelZoomModifierKey, setMouseWheelZoomModifierKey } = useUserSettings();
 
   const onLangChange = useCallback((e) => {
     const { value } = e.target;
@@ -218,6 +220,17 @@ const Settings = memo(({
       </Row>
 
       <Row>
+        <KeyCell>{t('Mouse wheel zoom modifier key')}</KeyCell>
+        <Table.TextCell>
+          <Select value={mouseWheelZoomModifierKey} onChange={(e) => setMouseWheelZoomModifierKey(e.target.value)}>
+            {Object.keys(keyMap).map((key) => (
+              <option key={key} value={key}>{key}</option>
+            ))}
+          </Select>
+        </Table.TextCell>
+      </Row>
+
+      <Row>
         <KeyCell>{t('Timeline trackpad/wheel sensitivity')}</KeyCell>
         <Table.TextCell>
           <Button onClick={() => onTunerRequested('wheelSensitivity')}>{t('Change value')}</Button>
@@ -278,6 +291,17 @@ const Settings = memo(({
             label={t('Ask about chapters')}
             checked={enableAskForImportChapters}
             onChange={e => setEnableAskForImportChapters(e.target.checked)}
+          />
+        </Table.TextCell>
+      </Row>
+
+      <Row>
+        <KeyCell>{t('Overwrite files when exporting, if a file with the same name as the output file name exists?')}</KeyCell>
+        <Table.TextCell>
+          <Checkbox
+            label={t('Overwrite existing files')}
+            checked={enableOverwriteOutput}
+            onChange={e => setEnableOverwriteOutput(e.target.checked)}
           />
         </Table.TextCell>
       </Row>

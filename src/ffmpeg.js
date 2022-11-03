@@ -1,21 +1,23 @@
 import pMap from 'p-map';
-import flatMap from 'lodash/flatMap';
 import sortBy from 'lodash/sortBy';
 import moment from 'moment';
 import i18n from 'i18next';
 import Timecode from 'smpte-timecode';
 
 import { pcmAudioCodecs, getMapStreamsArgs } from './util/streams';
-import { getOutPath, isDurationValid, getExtensionForFormat, isWindows, isMac, platform, arch } from './util';
+import { getSuffixedOutPath, isDurationValid, getExtensionForFormat, isWindows, isMac, platform, arch } from './util';
 
 const execa = window.require('execa');
 const { join } = window.require('path');
-const fileType = window.require('file-type');
-const readChunk = window.require('read-chunk');
+const FileType = window.require('file-type');
 const readline = window.require('readline');
 const isDev = window.require('electron-is-dev');
+const { pathExists } = window.require('fs-extra');
 
 let customFfPath;
+
+
+export class RefuseOverwriteError extends Error {}
 
 // Note that this does not work on MAS because of sandbox restrictions
 export function setCustomFfPath(path) {
@@ -257,7 +259,12 @@ function mapDefaultFormat({ streams, requestedFormat }) {
   }
 }
 
-function determineOutputFormat(ffprobeFormats, fileTypeResponse) {
+async function determineOutputFormat(ffprobeFormats, filePath) {
+  if (ffprobeFormats.length === 1) return ffprobeFormats[0];
+  // if ffprobe returned a list of formats, try to be a bit smarter about it.
+  const fileTypeResponse = await FileType.fromFile(filePath) || {};
+  console.log(`fileType detected format ${JSON.stringify(fileTypeResponse)}`);
+
   if (ffprobeFormats.includes(fileTypeResponse.ext)) return fileTypeResponse.ext;
   return ffprobeFormats[0] || undefined;
 }
@@ -267,11 +274,7 @@ export async function getSmarterOutFormat({ filePath, fileMeta: { format, stream
   console.log('formats', formatsStr);
   const formats = (formatsStr || '').split(',');
 
-  // ffprobe sometimes returns a list of formats, try to be a bit smarter about it.
-  const bytes = await readChunk(filePath, 0, 4100);
-  const fileTypeResponse = fileType(bytes) || {};
-  console.log(`fileType detected format ${JSON.stringify(fileTypeResponse)}`);
-  const assumedFormat = determineOutputFormat(formats, fileTypeResponse);
+  const assumedFormat = await determineOutputFormat(formats, filePath);
 
   return mapDefaultFormat({ streams, requestedFormat: assumedFormat });
 }
@@ -282,7 +285,15 @@ export async function readFileMeta(filePath) {
       '-of', 'json', '-show_chapters', '-show_format', '-show_entries', 'stream', '-i', filePath, '-hide_banner',
     ]);
 
-    const { streams = [], format = {}, chapters = [] } = JSON.parse(stdout);
+    let parsedJson;
+    try {
+      // https://github.com/mifi/lossless-cut/issues/1342
+      parsedJson = JSON.parse(stdout);
+    } catch (err) {
+      console.log('ffprobe stdout', stdout);
+      throw new Error('ffprobe returned malformed data');
+    }
+    const { streams = [], format = {}, chapters = [] } = parsedJson;
     return { format, streams, chapters };
   } catch (err) {
     // Windows will throw error with code ENOENT if format detection fails.
@@ -325,14 +336,21 @@ function getPreferredCodecFormat({ codec_name: codec, codec_type: type }) {
   return undefined;
 }
 
-async function extractNonAttachmentStreams({ customOutDir, filePath, streams }) {
+async function extractNonAttachmentStreams({ customOutDir, filePath, streams, enableOverwriteOutput }) {
   if (streams.length === 0) return;
 
   console.log('Extracting', streams.length, 'normal streams');
 
-  const streamArgs = flatMap(streams, ({ index, codec, type, format: { format, ext } }) => [
-    '-map', `0:${index}`, '-c', 'copy', '-f', format, '-y', getOutPath({ customOutDir, filePath, nameSuffix: `stream-${index}-${type}-${codec}.${ext}` }),
-  ]);
+  let streamArgs = [];
+  await pMap(streams, async ({ index, codec, type, format: { format, ext } }) => {
+    const outPath = getSuffixedOutPath({ customOutDir, filePath, nameSuffix: `stream-${index}-${type}-${codec}.${ext}` });
+    if (!enableOverwriteOutput && await pathExists(outPath)) throw new RefuseOverwriteError();
+
+    streamArgs = [
+      ...streamArgs,
+      '-map', `0:${index}`, '-c', 'copy', '-f', format, '-y', outPath,
+    ];
+  }, { concurrency: 1 });
 
   const ffmpegArgs = [
     '-hide_banner',
@@ -345,17 +363,22 @@ async function extractNonAttachmentStreams({ customOutDir, filePath, streams }) 
   console.log(stdout);
 }
 
-async function extractAttachmentStreams({ customOutDir, filePath, streams }) {
+async function extractAttachmentStreams({ customOutDir, filePath, streams, enableOverwriteOutput }) {
   if (streams.length === 0) return;
 
   console.log('Extracting', streams.length, 'attachment streams');
 
-  const streamArgs = flatMap(streams, ({ index, codec_name: codec, codec_type: type }) => {
+  let streamArgs = [];
+  await pMap(streams, async ({ index, codec_name: codec, codec_type: type }) => {
     const ext = codec || 'bin';
-    return [
-      `-dump_attachment:${index}`, getOutPath({ customOutDir, filePath, nameSuffix: `stream-${index}-${type}-${codec}.${ext}` }),
+    const outPath = getSuffixedOutPath({ customOutDir, filePath, nameSuffix: `stream-${index}-${type}-${codec}.${ext}` });
+    if (!enableOverwriteOutput && await pathExists(outPath)) throw new RefuseOverwriteError();
+
+    streamArgs = [
+      ...streamArgs,
+      `-dump_attachment:${index}`, outPath,
     ];
-  });
+  }, { concurrency: 1 });
 
   const ffmpegArgs = [
     '-y',
@@ -377,7 +400,7 @@ async function extractAttachmentStreams({ customOutDir, filePath, streams }) {
 }
 
 // https://stackoverflow.com/questions/32922226/extract-every-audio-and-subtitles-from-a-video-with-ffmpeg
-export async function extractStreams({ filePath, customOutDir, streams }) {
+export async function extractStreams({ filePath, customOutDir, streams, enableOverwriteOutput }) {
   const attachmentStreams = streams.filter((s) => s.codec_type === 'attachment');
   const nonAttachmentStreams = streams.filter((s) => s.codec_type !== 'attachment');
 
@@ -394,8 +417,8 @@ export async function extractStreams({ filePath, customOutDir, streams }) {
   // TODO progress
 
   // Attachment streams are handled differently from normal streams
-  await extractNonAttachmentStreams({ customOutDir, filePath, streams: outStreams });
-  await extractAttachmentStreams({ customOutDir, filePath, streams: attachmentStreams });
+  await extractNonAttachmentStreams({ customOutDir, filePath, streams: outStreams, enableOverwriteOutput });
+  await extractAttachmentStreams({ customOutDir, filePath, streams: attachmentStreams, enableOverwriteOutput });
 }
 
 async function renderThumbnail(filePath, timestamp) {
@@ -517,8 +540,14 @@ export async function renderWaveformPng({ filePath, aroundTime, window, color })
   }
 }
 
-export async function blackDetect({ filePath, duration, minInterval = 0.05, onProgress }) {
-  const args = ['-hide_banner', '-i', filePath, '-vf', `blackdetect=d=${minInterval}`, '-an', '-f', 'null', '-'];
+export async function blackDetect({ filePath, duration, minInterval = 0.05, onProgress, from, to }) {
+  const args = [
+    '-hide_banner',
+    ...(from != null ? ['-ss', from.toFixed(5)] : []),
+    '-i', filePath,
+    ...(to != null ? ['-t', (to - from).toFixed(5)] : []),
+    '-vf', `blackdetect=d=${minInterval}`, '-an', '-f', 'null', '-',
+  ];
   const process = execa(getFfmpegPath(), args, { encoding: null, buffer: false });
 
   const blackSegments = [];
@@ -534,7 +563,8 @@ export async function blackDetect({ filePath, duration, minInterval = 0.05, onPr
   handleProgress(process, duration, onProgress, customMatcher);
 
   await process;
-  return blackSegments;
+  const offset = from != null ? from : 0;
+  return blackSegments.map(({ blackStart, blackEnd }) => ({ blackStart: blackStart + offset, blackEnd: blackEnd + offset }));
 }
 
 export async function extractWaveform({ filePath, outPath }) {
@@ -576,9 +606,6 @@ export async function captureFrame({ timestamp, videoPath, outPath, numFrames })
     '-y', outPath,
   ]);
 }
-
-
-export const isMov = (format) => ['ismv', 'ipod', 'mp4', 'mov'].includes(format);
 
 export function isIphoneHevc(format, streams) {
   if (!streams.some((s) => s.codec_name === 'hevc')) return false;

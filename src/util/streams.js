@@ -1,9 +1,13 @@
 // https://www.ffmpeg.org/doxygen/3.2/libavutil_2utils_8c_source.html#l00079
-export const defaultProcessedCodecTypes = [
+const defaultProcessedCodecTypes = [
   'video',
   'audio',
   'subtitle',
   'attachment',
+];
+
+const unprocessableCodecs = [
+  'dvb_teletext', // ffmpeg doesn't seem to support this https://github.com/mifi/lossless-cut/issues/1343
 ];
 
 // taken from `ffmpeg -codecs`
@@ -102,6 +106,8 @@ export function getActiveDisposition(disposition) {
   return existingActiveDispositionEntry[0]; // return the key
 }
 
+export const isMov = (format) => ['ismv', 'ipod', 'mp4', 'mov'].includes(format);
+
 function getPerStreamFlags({ stream, outputIndex, outFormat, manuallyCopyDisposition = false, getVideoArgs = () => {} }) {
   let args = [];
 
@@ -112,7 +118,7 @@ function getPerStreamFlags({ stream, outputIndex, outFormat, manuallyCopyDisposi
   if (stream.codec_type === 'subtitle') {
     // mp4/mov only supports mov_text, so convert it https://stackoverflow.com/a/17584272/6519037
     // https://github.com/mifi/lossless-cut/issues/418
-    if (['mov', 'mp4'].includes(outFormat) && stream.codec_name !== 'mov_text') {
+    if (isMov(outFormat) && stream.codec_name !== 'mov_text') {
       addCodecArgs('mov_text');
     } else if (outFormat === 'matroska' && stream.codec_name === 'mov_text') {
       // matroska doesn't support mov_text, so convert it to SRT (popular codec)
@@ -144,7 +150,7 @@ function getPerStreamFlags({ stream, outputIndex, outFormat, manuallyCopyDisposi
       addCodecArgs('copy');
     }
 
-    if (['mov', 'mp4'].includes(outFormat)) {
+    if (isMov(outFormat)) {
       if (['0x0000', '0x31637668'].includes(stream.codec_tag) && stream.codec_name === 'hevc') {
         args = [...args, `-tag:${outputIndex}`, 'hvc1'];
       }
@@ -187,6 +193,7 @@ export function getMapStreamsArgs({ startIndex = 0, outFormat, allFilesMeta, cop
 
 export function shouldCopyStreamByDefault(stream) {
   if (!defaultProcessedCodecTypes.includes(stream.codec_type)) return false;
+  if (unprocessableCodecs.includes(stream.codec_name)) return false;
   return true;
 }
 
@@ -216,16 +223,17 @@ export function getStreamIdsToCopy({ streams, includeAllStreams }) {
   return ret;
 }
 
-// With these codecs, the player will not give a playback error, but instead only play audio
+// With these codecs, the player will not give a playback error, but instead only play audio,
+// so we will detect these codecs and convert to dummy
 export function doesPlayerSupportFile(streams) {
   const realVideoStreams = getRealVideoStreams(streams);
-  // Don't check audio formats, assume all is OK
+  // If audio-only format, assume all is OK
   if (realVideoStreams.length === 0) return true;
   // If we have at least one video that is NOT of the unsupported formats, assume the player will be able to play it natively
   // https://github.com/mifi/lossless-cut/issues/595
   // https://github.com/mifi/lossless-cut/issues/975
   // But cover art / thumbnail streams don't count e.g. hevc with a png stream (disposition.attached_pic=1)
-  return realVideoStreams.some(s => !['hevc', 'prores', 'mpeg4', 'tscc2'].includes(s.codec_name));
+  return realVideoStreams.some(s => !['hevc', 'prores', 'mpeg4', 'tscc2', 'dvvideo'].includes(s.codec_name));
 }
 
 export function isAudioDefinitelyNotSupported(streams) {
@@ -233,4 +241,13 @@ export function isAudioDefinitelyNotSupported(streams) {
   if (audioStreams.length === 0) return false;
   // TODO this could be improved
   return audioStreams.every(stream => ['ac3'].includes(stream.codec_name));
+}
+
+export function getVideoTimebase(videoStream) {
+  const timebaseMatch = videoStream.time_base && videoStream.time_base.split('/');
+  if (timebaseMatch) {
+    const timebaseParsed = parseInt(timebaseMatch[1], 10);
+    if (!Number.isNaN(timebaseParsed)) return timebaseParsed;
+  }
+  return undefined;
 }

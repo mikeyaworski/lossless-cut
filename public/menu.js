@@ -2,7 +2,6 @@ const electron = require('electron'); // eslint-disable-line
 const i18n = require('i18next');
 
 const { Menu } = electron;
-const { dialog } = electron;
 
 const { homepage, getReleaseUrl, licensesPage } = require('./constants');
 
@@ -17,9 +16,7 @@ module.exports = (app, mainWindow, newVersion) => {
           label: i18n.t('Open'),
           accelerator: 'CmdOrCtrl+O',
           async click() {
-            const { canceled, filePaths } = await dialog.showOpenDialog({ properties: ['openFile', 'multiSelections'] });
-            if (canceled) return;
-            mainWindow.webContents.send('openFiles', filePaths);
+            mainWindow.webContents.send('openFilesDialog');
           },
         },
         {
@@ -79,6 +76,12 @@ module.exports = (app, mainWindow, newVersion) => {
               label: i18n.t('DaVinci Resolve / Final Cut Pro XML'),
               click() {
                 mainWindow.webContents.send('importEdlFile', 'xmeml');
+              },
+            },
+            {
+              label: i18n.t('Final Cut Pro FCPX / FCPXML'),
+              click() {
+                mainWindow.webContents.send('importEdlFile', 'fcpxml');
               },
             },
             {
@@ -153,34 +156,27 @@ module.exports = (app, mainWindow, newVersion) => {
             mainWindow.webContents.send('toggleSettings');
           },
         },
-        { type: 'separator' },
-        {
-          label: i18n.t('Exit'),
-          click() {
-            app.quit();
+        // Due to Apple Review Guidelines, we cannot include an Exit menu item here
+        // Apple has their own Quit from the app menu
+        ...(process.platform !== 'darwin' ? [
+          { type: 'separator' },
+          {
+            label: i18n.t('Exit'),
+            click() {
+              app.quit();
+            },
           },
-        },
+        ] : []),
       ],
     },
 
     {
       label: i18n.t('Edit'),
       submenu: [
-        // TODO: See https://github.com/mifi/lossless-cut/issues/610
-        // { role: 'undo', label: i18n.t('Undo') },
-        // { role: 'redo', label: i18n.t('Redo') },
-        {
-          label: i18n.t('Undo'),
-          accelerator: 'CmdOrCtrl+Z',
-          click: async () => dialog.showMessageBox({ message: 'Undo/redo from the menu isn\'t currently working. Please use the keyboard shortcuts instead.' }),
-        },
-        {
-          label: i18n.t('Redo'),
-          accelerator: 'CmdOrCtrl+Shift+Z',
-          click: async () => dialog.showMessageBox({ message: 'Undo/redo from the menu isn\'t currently working. Please use the keyboard shortcuts instead.' }),
-        },
-
-
+        // https://github.com/mifi/lossless-cut/issues/610
+        // https://github.com/mifi/lossless-cut/issues/1183
+        { role: 'undo', label: i18n.t('Undo') },
+        { role: 'redo', label: i18n.t('Redo') },
         { type: 'separator' },
         { role: 'cut', label: i18n.t('Cut') },
         { role: 'copy', label: i18n.t('Copy') },
@@ -303,6 +299,10 @@ module.exports = (app, mainWindow, newVersion) => {
             mainWindow.webContents.send('detectBlackScenes');
           },
         },
+        {
+          label: i18n.t('Last ffmpeg commands'),
+          click() { mainWindow.webContents.send('toggleLastCommands'); },
+        },
         { type: 'separator' },
         { role: 'toggleDevTools', label: i18n.t('Toggle Developer Tools') },
       ],
@@ -312,28 +312,39 @@ module.exports = (app, mainWindow, newVersion) => {
       label: i18n.t('Help'),
       submenu: [
         {
-          label: i18n.t('Help and shortcuts'),
-          click() {
-            mainWindow.webContents.send('toggleHelp');
-          },
+          label: i18n.t('How to use'),
+          click() { electron.shell.openExternal('https://mifi.no/losslesscut/usage'); },
         },
         {
-          label: i18n.t('About'),
-          click() {
-            mainWindow.webContents.send('openAbout');
-          },
+          label: i18n.t('FAQ'),
+          click() { electron.shell.openExternal('https://mifi.no/losslesscut/faq'); },
         },
         {
-          label: i18n.t('Licenses'),
-          click() { electron.shell.openExternal(licensesPage); },
+          label: i18n.t('Troubleshooting'),
+          click() { electron.shell.openExternal('https://mifi.no/losslesscut/troubleshooting'); },
         },
         {
           label: i18n.t('Learn More'),
           click() { electron.shell.openExternal(homepage); },
         },
         {
+          label: i18n.t('Licenses'),
+          click() { electron.shell.openExternal(licensesPage); },
+        },
+        { type: 'separator' },
+        {
+          label: i18n.t('Keyboard & mouse shortcuts'.replace(/&/g, '&&')),
+          click() {
+            mainWindow.webContents.send('toggleKeyboardShortcuts');
+          },
+        },
+        {
           label: i18n.t('Report an error'),
           click() { mainWindow.webContents.send('openSendReportDialog'); },
+        },
+        {
+          label: i18n.t('Version'),
+          click() { mainWindow.webContents.send('openAbout'); },
         },
       ],
     },
