@@ -31,7 +31,7 @@ const ConcatDialog = memo(({
   const { t } = useTranslation();
   const { preserveMovData, setPreserveMovData, segmentsToChapters, setSegmentsToChapters, preserveMetadataOnMerge, setPreserveMetadataOnMerge } = useUserSettings();
 
-  const [includeAllStreams, setIncludeAllStreams] = useState(false);
+  const [includeAllStreams, setIncludeAllStreams] = useState(true);
   const [fileMeta, setFileMeta] = useState();
   const [allFilesMetaCache, setAllFilesMetaCache] = useState({});
   const [clearBatchFilesAfterConcat, setClearBatchFilesAfterConcat] = useState(false);
