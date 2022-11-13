@@ -806,7 +806,17 @@ const App = memo(() => {
     [filePath]: mainFileMeta,
   }), [externalFilesMeta, filePath, mainFileMeta]);
 
-  const numStreamsTotal = flatMap(Object.values(allFilesMeta), ({ streams }) => streams).length;
+  const allStreams = flatMap(Object.values(allFilesMeta), ({ streams }) => streams);
+  const numStreamsTotal = allStreams.length;
+
+  const numAudioTracks = getAudioStreams(allStreams).length;
+  const toggleAudioTrack = useCallback(() => {
+    if (!videoRef.current) return;
+    const activeIdx = Array.from(videoRef.current.audioTracks).findIndex(t => t.enabled);
+    const newActiveIdx = (activeIdx + 1) % videoRef.current.audioTracks.length;
+    videoRef.current.audioTracks[activeIdx].enabled = false;
+    videoRef.current.audioTracks[newActiveIdx].enabled = true;
+  }, []);
 
   const toggleStripAudio = useCallback(() => {
     setCopyStreamIdsForPath(filePath, (old) => {
@@ -2395,6 +2405,8 @@ const App = memo(() => {
             numStreamsTotal={numStreamsTotal}
             setStreamsSelectorShown={setStreamsSelectorShown}
             selectedSegments={selectedSegmentsOrInverse}
+            numAudioTracks={numAudioTracks}
+            toggleAudioTrack={toggleAudioTrack}
           />
 
           <div style={{ flexGrow: 1, display: 'flex', overflowY: 'hidden' }}>

@@ -1,7 +1,7 @@
 import React, { memo, useCallback } from 'react';
 import { IoIosSettings } from 'react-icons/io';
 import { FaLock, FaUnlock } from 'react-icons/fa';
-import { IconButton, Button, CrossIcon, ListIcon, VolumeUpIcon, VolumeOffIcon } from 'evergreen-ui';
+import { IconButton, Button, CrossIcon, ListIcon, VolumeUpIcon, VolumeOffIcon, RefreshIcon } from 'evergreen-ui';
 import { useTranslation } from 'react-i18next';
 
 import ExportModeButton from './components/ExportModeButton';
@@ -14,7 +14,7 @@ import useUserSettings from './hooks/useUserSettings';
 const TopMenu = memo(({
   filePath, fileFormat, copyAnyAudioTrack, toggleStripAudio,
   renderOutFmt, numStreamsToCopy, numStreamsTotal, setStreamsSelectorShown, toggleSettings,
-  selectedSegments, isCustomFormatSelected, clearOutDir,
+  selectedSegments, isCustomFormatSelected, clearOutDir, numAudioTracks, toggleAudioTrack,
 }) => {
   const { t } = useTranslation();
   const { customOutDir, changeOutDir, simpleMode, outFormatLocked, setOutFormatLocked } = useUserSettings();
@@ -48,6 +48,16 @@ const TopMenu = memo(({
           >
             {copyAnyAudioTrack ? t('Keep audio') : t('Discard audio')}
           </Button>
+
+          {numAudioTracks > 1 && (
+            <Button
+              iconBefore={RefreshIcon}
+              height={20}
+              onClick={toggleAudioTrack}
+            >
+              Switch Audio Tracks
+            </Button>
+          )}
         </>
       )}
 

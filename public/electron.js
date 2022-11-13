@@ -69,6 +69,7 @@ function createWindow() {
     ...getSizeOptions(),
     darkTheme: true,
     webPreferences: {
+      experimentalFeatures: true,
       enableRemoteModule: true,
       contextIsolation: false,
       nodeIntegration: true,
