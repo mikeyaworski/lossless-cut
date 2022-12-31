@@ -7,9 +7,7 @@ import SetCutpointButton from './components/SetCutpointButton';
 import SimpleModeButton from './components/SimpleModeButton';
 import useUserSettings from './hooks/useUserSettings';
 
-const electron = window.require('electron');
-
-const NoFileLoaded = memo(({ mifiLink, currentCutSeg }) => {
+const NoFileLoaded = memo(({ currentCutSeg }) => {
   const { t } = useTranslation();
   const { simpleMode, toggleSimpleMode } = useUserSettings();
 
@@ -28,15 +26,6 @@ const NoFileLoaded = memo(({ mifiLink, currentCutSeg }) => {
       <div style={{ fontSize: '3vmin', color: '#ccc', cursor: 'pointer' }} role="button" onClick={toggleSimpleMode}>
         <SimpleModeButton style={{ verticalAlign: 'middle' }} size={16} /> {simpleMode ? i18n.t('to show advanced view') : i18n.t('to show simple view')}
       </div>
-
-
-      {mifiLink && mifiLink.loadUrl && (
-        <div style={{ position: 'relative', margin: '3vmin', width: '60vmin', height: '20vmin' }}>
-          <iframe src={mifiLink.loadUrl} title="iframe" style={{ background: 'rgba(0,0,0,0)', border: 'none', pointerEvents: 'none', width: '100%', height: '100%', position: 'absolute' }} />
-          {/* eslint-disable-next-line jsx-a11y/interactive-supports-focus */}
-          <div style={{ width: '100%', height: '100%', position: 'absolute', cursor: 'pointer' }} role="button" onClick={() => electron.shell.openExternal(mifiLink.targetUrl)} />
-        </div>
-      )}
     </div>
   );
 });
