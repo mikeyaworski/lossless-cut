@@ -229,6 +229,22 @@ function App() {
     });
   }, [setPlaybackVolume]);
 
+  // Use middle mouse button to toggle mute
+  useEffect(() => {
+    const handleMiddleClick = (e: MouseEvent) => {
+      if (e.button === 1) { // Middle mouse button
+        e.preventDefault();
+        toggleMuted();
+      }
+    };
+
+    const videoElement = videoRef.current;
+    if (videoElement) videoElement.addEventListener('mousedown', handleMiddleClick);
+    return () => {
+      if (videoElement) videoElement.removeEventListener('mousedown', handleMiddleClick);
+    };
+  }, [toggleMuted, videoRef]);
+
   const toggleShowThumbnails = useCallback(() => setThumbnailsEnabled((v) => !v), []);
 
   const hideAllNotifications = hideNotifications === 'all';
