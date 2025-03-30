@@ -19,28 +19,30 @@ jobs:
       - run: git config --global core.autocrlf false
 
       - name: Check out Git repository
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
 
       - name: Install Node.js, NPM and Yarn
-        uses: actions/setup-node@v2
+        uses: actions/setup-node@v4
         with:
-          node-version: 16
+          node-version: 20
           cache: 'yarn'
 
        # Because of timeout issue https://github.com/yarnpkg/yarn/issues/4890
-      - run: yarn install --network-timeout 1000000
+      - run: yarn install --immutable --network-timeout 1000000
 
-      - name: Download ffmpeg for Mac
+      - name: (MacOS) Download ffmpeg
         if: startsWith(matrix.os, 'macos')
-        run: yarn download-ffmpeg-mac
+        run: |
+          yarn download-ffmpeg-darwin-x64
+          yarn download-ffmpeg-darwin-arm64
 
-      - name: Download ffmpeg for Windows
+      - name: (Windows) Download ffmpeg
         if: startsWith(matrix.os, 'windows')
-        run: yarn download-ffmpeg-windows
+        run: yarn download-ffmpeg-win32-x64
 
-      - name: Download ffmpeg for Linux
+      - name: (Linux) Download ffmpeg
         if: startsWith(matrix.os, 'ubuntu')
-        run: yarn download-ffmpeg-linux
+        run: yarn download-ffmpeg-linux-x64
 
       - name: Build/release Electron app
         uses: samuelmeuli/action-electron-builder@v1
@@ -53,4 +55,4 @@ jobs:
           # release the app after building
           release: ${{ env.is_tag == 'true' }}
 
-          max_attempts: 2
+          max_attempts: 1
