@@ -2272,7 +2272,7 @@ function App() {
     e.target.blur();
   }, []);
 
-  const onVideoClick = useCallback(() => togglePlay(), [togglePlay]);
+  const toggleVideoPlayback = useCallback(() => togglePlay(), [togglePlay]);
 
   const tryExportEdlFile = useCallback(async (type: EdlExportType) => {
     if (!checkFileOpened() || selectedSegments.length === 0) return;
@@ -2512,7 +2512,7 @@ function App() {
                       onDurationChange={onDurationChange}
                       onTimeUpdate={onTimeUpdate}
                       onError={onVideoError}
-                      onClick={onVideoClick}
+                      onContextMenu={toggleVideoPlayback}
                       onDoubleClick={toggleFullscreenVideo}
                       onFocusCapture={onVideoFocus}
                       onSeeked={onSeeked}
