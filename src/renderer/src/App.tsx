@@ -74,6 +74,7 @@ import {
   getDownloadMediaOutPath,
   isAbortedError,
   withErrorHandling,
+  tryResolvingShortcutFile,
 } from './util';
 import { toast, errorToast, showPlaybackFailedMessage } from './swal';
 import { adjustRate } from './util/rate-calculator';
@@ -1335,6 +1336,10 @@ function App() {
       return true;
     }
 
+    // Attempt to resolve any shortcut to its target file before processing
+    // eslint-disable-next-line no-param-reassign
+    fp = tryResolvingShortcutFile(fp);
+
     const storeProjectInSourceDir = !storeProjectInWorkingDir;
 
     async function tryFindAndLoadProjectFile({ chapters, cod }: { chapters: FFprobeChapter[], cod: string | undefined }) {
@@ -1748,15 +1753,7 @@ function App() {
   const batchLoadPaths = useCallback((newPaths: string[], append?: boolean) => {
     // Attempt to resolve any shortcuts to their target files before processing
     // eslint-disable-next-line no-param-reassign
-    newPaths = newPaths.map(path => {
-      try {
-        const { target } = electron.shell.readShortcutLink(path);
-        if (target) return target;
-      } catch {
-        // Intentionally empty
-      }
-      return path;
-    });
+    newPaths = newPaths.map(path => tryResolvingShortcutFile(path));
     setBatchFiles((existingFiles) => {
       const mapPathsToFiles = (paths: string[]) => paths.map((path) => ({ path, name: basename(path) }));
       if (append) {

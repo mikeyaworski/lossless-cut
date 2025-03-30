@@ -16,7 +16,7 @@ import { Html5ifyMode } from '../../../types';
 const { dirname, parse: parsePath, join, extname, isAbsolute, resolve, basename } = window.require('path');
 const fsExtra = window.require('fs-extra');
 const { stat, lstat, readdir, utimes, unlink } = window.require('fs/promises');
-const { ipcRenderer } = window.require('electron');
+const { ipcRenderer, shell } = window.require('electron');
 const remote = window.require('@electron/remote');
 const { isWindows, isMac } = remote.require('./index.js');
 
@@ -511,6 +511,16 @@ export function getImportProjectType(filePath: string) {
   const matchingExt = Object.keys(edlFormatForExtension).find((ext) => filePath.toLowerCase().endsWith(`.${ext}`)) as keyof typeof edlFormatForExtension | undefined;
   if (!matchingExt) return undefined;
   return edlFormatForExtension[matchingExt];
+}
+
+export function tryResolvingShortcutFile(filePath: string): string {
+  try {
+    const { target } = shell.readShortcutLink(filePath);
+    if (target) return target;
+  } catch {
+    // Intentionally empty
+  }
+  return filePath;
 }
 
 export const calcShouldShowWaveform = (zoomedDuration: number | undefined) => (zoomedDuration != null && zoomedDuration < ffmpegExtractWindow * 8);
