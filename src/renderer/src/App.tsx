@@ -9,6 +9,7 @@ import { produce } from 'immer';
 import screenfull from 'screenfull';
 import { IpcRendererEvent } from 'electron';
 
+import clamp from 'lodash/clamp';
 import fromPairs from 'lodash/fromPairs';
 import sum from 'lodash/sum';
 import invariant from 'tiny-invariant';
@@ -763,19 +764,19 @@ function App() {
   const getNewJumpIndex = (oldIndex: number, direction: -1 | 1) => Math.max(oldIndex + direction, 0);
 
   const jumpSeg = useCallback((params: ({ abs: number } | { rel: -1 | 1 }) & { seek?: true }) => {
-    const clamp = (v: number) => Math.max(0, Math.min(v, cutSegments.length - 1));
+    const clampSeg = (v: number) => clamp(0, v, cutSegments.length - 1);
 
     const seek = (index: number) => {
       if (params.seek && cutSegments[index]) seekAbs(cutSegments[index].start);
     };
 
     if ('abs' in params) {
-      const index = clamp(params.abs);
+      const index = clampSeg(params.abs);
       setCurrentSegIndex(index);
       seek(index);
     } else {
       setCurrentSegIndex((old) => {
-        const index = clamp(getNewJumpIndex(old, params.rel));
+        const index = clampSeg(getNewJumpIndex(old, params.rel));
         seek(index);
         return index;
       });
@@ -1524,7 +1525,17 @@ function App() {
     seekAbs(time);
   }, [findNearestKeyFrameTime, getRelevantTime, seekAbs]);
 
+  // TODO: This hook should be refactored to not hardcode in the action
+  // of each modifier or unmodified scroll
+  // e.g. seekRel function should be onScroll, zoomRel should be onCtrlScroll, etc.
+  // The modifier key names are baked into the user settings,
+  // so I'll wait to refactor this until those modifiers are able
+  // to be changed in the settings UI.
+  const scrollVolume = useCallback((value: number) => {
+    setPlaybackVolume((v) => clamp(v + (value / 100), 0, 1));
+  }, [setPlaybackVolume]);
   const onTimelineWheel = useTimelineScroll({ wheelSensitivity, mouseWheelZoomModifierKey, mouseWheelFrameSeekModifierKey, mouseWheelKeyframeSeekModifierKey, invertTimelineScroll, zoomRel, seekRel, shortStep, seekClosestKeyframe });
+  const onPreviewWheel = useTimelineScroll({ wheelSensitivity, mouseWheelZoomModifierKey, mouseWheelFrameSeekModifierKey, mouseWheelKeyframeSeekModifierKey, invertTimelineScroll, zoomRel, seekRel: scrollVolume, shortStep, seekClosestKeyframe });
 
   const seekAccelerationRef = useRef(1);
 
@@ -2520,7 +2531,7 @@ function App() {
                 <div style={{ position: 'relative', flexGrow: 1, overflow: 'hidden' }} ref={videoContainerRef}>
                   {!isFileOpened && <NoFileLoaded currentCutSeg={currentCutSeg} onClick={openFilesDialog} keyBindingByAction={keyBindingByAction} />}
 
-                  <div className="no-user-select" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, visibility: !isFileOpened || !hasVideo || bigWaveformEnabled ? 'hidden' : undefined }} onWheel={onTimelineWheel}>
+                  <div className="no-user-select" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, visibility: !isFileOpened || !hasVideo || bigWaveformEnabled ? 'hidden' : undefined }} onWheel={onPreviewWheel}>
                     {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
                     <video
                       className={styles['video']}
