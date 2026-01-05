@@ -1963,22 +1963,19 @@ function App() {
   const parseClipboardTime = useCallback((text: string, parseTimecodeFn: ParseTimecode): number | undefined => {
     // Format 1: 1h2m5s style (e.g., 1h2m5s, 05m04s, 1h5s)
     const hmsMatch = text.match(/^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$/);
-    if (hmsMatch) {
+    // Need at least one component (don't match empty string)
+    if (hmsMatch && (hmsMatch[1] || hmsMatch[2] || hmsMatch[3])) {
       const hours = hmsMatch[1] ? parseInt(hmsMatch[1], 10) : 0;
       const minutes = hmsMatch[2] ? parseInt(hmsMatch[2], 10) : 0;
       const seconds = hmsMatch[3] ? parseInt(hmsMatch[3], 10) : 0;
-      // Need at least one component
-      if (hmsMatch[1] || hmsMatch[2] || hmsMatch[3]) {
-        return hours * 3600 + minutes * 60 + seconds;
-      }
-      return undefined;
+      return hours * 3600 + minutes * 60 + seconds;
     }
 
-    // Format 2: 01:02:03.050 style (HH:MM:SS.mmm)
-    const timestampMatch = text.match(/^\d{2}:\d{2}:\d{2}\.\d{3}$/);
-    if (timestampMatch) {
-      // Use parseTimecode which handles this format
-      return parseTimecodeFn(text);
+    // Format 2: Try parseTimecode which handles various timestamp formats
+    // This will handle formats like 01:02:03.050, 1:23:45.678, etc.
+    const parsedTimecode = parseTimecodeFn(text);
+    if (parsedTimecode !== undefined) {
+      return parsedTimecode;
     }
 
     return undefined;
