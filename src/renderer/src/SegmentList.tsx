@@ -107,7 +107,7 @@ const Segment = memo(({
 
       { type: 'separator' },
 
-      { label: t('Add segment'), click: addSegment },
+      { label: t('Add segment'), click: () => addSegment() },
       { label: t('Label segment'), click: () => onLabelPress(index) },
       { label: t('Remove segment'), click: () => onRemovePress(index) },
       { label: t('Duplicate segment'), click: () => onDuplicateSegmentClick(seg) },
@@ -375,7 +375,7 @@ function SegmentList({
             style={{ ...buttonBaseStyle, background: neutralButtonColor }}
             role="button"
             title={t('Add segment')}
-            onClick={addSegment}
+            onClick={() => addSegment()}
           />
 
           <FaMinus
