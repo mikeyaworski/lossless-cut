@@ -629,6 +629,10 @@ const KeyboardShortcuts = memo(({
         name: t('Copy selected segments times to clipboard'),
         category: otherCategory,
       },
+      pasteFromClipboard: {
+        name: t('Paste from clipboard'),
+        category: otherCategory,
+      },
       toggleWaveformMode: {
         name: t('Show waveform'),
         category: otherCategory,

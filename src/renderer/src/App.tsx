@@ -103,6 +103,7 @@ import useStreamsMeta from './hooks/useStreamsMeta';
 import { bottomStyle, videoStyle } from './styles';
 import styles from './App.module.css';
 import { DirectoryAccessDeclinedError } from '../errors';
+import { parseHumanishTimecode } from './util/timecode';
 
 const electron = window.require('electron');
 const { exists } = window.require('fs-extra');
@@ -1959,6 +1960,47 @@ function App() {
     electron.clipboard.writeText(await formatTsv(selectedSegments));
   }, [isFileOpened, selectedSegments]);
 
+  const parseClipboardTime = useCallback((text: string): number | null | undefined => {
+    // For some reason, parseTimecode is a hook instead of a util function.
+    // Instead of adding the humanish timecode parsing into that hook,
+    // I'm going to keep it separate to not cause any accidental bugs
+    // and not add to the mess.
+    let parsedTimecode: number | null | undefined = parseHumanishTimecode(text);
+    if (parsedTimecode == null) parsedTimecode = parseTimecode(text);
+    return parsedTimecode;
+  }, [parseTimecode]);
+
+  const pasteFromClipboard = useCallback(() => {
+    try {
+      const clipboardText = electron.clipboard.readText().trim();
+      if (!clipboardText || !checkFileOpened() || fileDuration == null) return;
+
+      let pastedTime = parseClipboardTime(clipboardText);
+      if (pastedTime == null) return;
+      pastedTime = Math.max(0, Math.min(pastedTime, fileDuration));
+
+      // Either update the existing segment or create a new one
+      if (currentCutSeg == null || (currentCutSeg.end != null && currentCutSeg.end < fileDuration)) {
+        // Create a new segment
+        // Active segment is complete and not a default
+        addSegment(pastedTime);
+        console.log('Pasted time code.', 'Created a new segment at', pastedTime);
+      } else if (currentCutSeg.start === 0) {
+        // Update start time
+        // Active segment spans the entire video, meaning it is a default segment
+        console.log('Pasted time code.', 'Updated start time of active segment to', pastedTime);
+        setCutTime('start', pastedTime);
+      } else {
+        // Update end time
+        // Start time is already set and the end time is either unset or at the end of the file, which is the default
+        console.log('Pasted time code.', 'Updated end time of active segment to', pastedTime);
+        setCutTime('end', pastedTime);
+      }
+    } catch (err) {
+      console.error('Error pasting from clipboard:', err);
+    }
+  }, [checkFileOpened, fileDuration, currentCutSeg, addSegment, setCutTime, parseClipboardTime]);
+
   const showIncludeExternalStreamsDialog = useCallback(async () => {
     await withErrorHandling(async () => {
       const { canceled, filePaths } = await showOpenDialog({ properties: ['openFile'], title: t('Include more tracks from other file') });
@@ -2098,7 +2140,7 @@ function App() {
       undo: () => cutSegmentsHistory.back(),
       redo: () => cutSegmentsHistory.forward(),
       labelCurrentSegment: () => { labelSegment(currentSegIndexSafe); return false; },
-      addSegment,
+      addSegment: () => addSegment(),
       duplicateCurrentSegment,
       toggleLastCommands: () => { toggleLastCommands(); return false; },
       export: onExportPress,
@@ -2140,6 +2182,7 @@ function App() {
       decreaseVolume: () => setPlaybackVolume((val) => Math.max(0, val - 0.07)),
       toggleMuted,
       copySegmentsToClipboard,
+      pasteFromClipboard,
       reloadFile: () => setCacheBuster((v) => v + 1),
       quit: () => quitApp(),
       closeCurrentFile: () => { closeFileWithConfirm(); },
@@ -2169,7 +2212,7 @@ function App() {
     };
 
     return ret;
-  }, [toggleLoopSelectedSegments, pause, timelineToggleComfortZoom, captureSnapshot, captureSnapshotAsCoverArt, setCutStart, setCutEnd, cleanupFilesDialog, splitCurrentSegment, focusSegmentAtCursor, selectSegmentsAtCursor, increaseRotation, goToTimecode, jumpCutStart, jumpCutEnd, jumpTimelineStart, jumpTimelineEnd, batchOpenSelectedFile, closeBatch, addSegment, duplicateCurrentSegment, onExportPress, extractCurrentSegmentFramesAsImages, extractSelectedSegmentsFramesAsImages, reorderSegsByStartTime, invertAllSegments, fillSegmentsGaps, combineOverlappingSegments, combineSelectedSegments, createFixedDurationSegments, createNumSegments, createFixedByteSizedSegments, createRandomSegments, alignSegmentTimesToKeyframes, shuffleSegments, clearSegments, toggleSegmentsList, toggleStreamsSelector, extractAllStreams, convertFormatBatch, concatBatch, toggleCaptureFormat, toggleStripAudio, toggleStripThumbnail, askStartTimeOffset, deselectAllSegments, selectAllSegments, selectOnlyCurrentSegment, editCurrentSegmentTags, toggleCurrentSegmentSelected, invertSelectedSegments, removeSelectedSegments, tryFixInvalidDuration, shiftAllSegmentTimes, toggleMuted, copySegmentsToClipboard, handleShowStreamsSelectorClick, openFilesDialog, openDirDialog, toggleSettings, createSegmentsFromKeyframes, toggleWaveformMode, toggleShowThumbnails, toggleShowKeyframes, showIncludeExternalStreamsDialog, toggleFullscreenVideo, selectAllMarkers, checkFileOpened, cutSegments, seekRel, keyboardSeekAccFactor, togglePlay, play, userChangePlaybackRate, keyboardNormalSeekSpeed, keyboardSeekSpeed2, keyboardSeekSpeed3, seekRelPercent, seekClosestKeyframe, shortStep, jumpSeg, zoomRel, batchFileJump, removeSegment, currentSegIndexSafe, cutSegmentsHistory, labelSegment, toggleLastCommands, userHtml5ifyCurrentFile, toggleKeyframeCut, setPlaybackVolume, closeFileWithConfirm, openSendReportDialogWithState, detectBlackScenes, detectSilentScenes, detectSceneChanges]);
+  }, [toggleLoopSelectedSegments, pause, timelineToggleComfortZoom, captureSnapshot, captureSnapshotAsCoverArt, setCutStart, setCutEnd, cleanupFilesDialog, splitCurrentSegment, focusSegmentAtCursor, selectSegmentsAtCursor, increaseRotation, goToTimecode, jumpCutStart, jumpCutEnd, jumpTimelineStart, jumpTimelineEnd, batchOpenSelectedFile, closeBatch, addSegment, duplicateCurrentSegment, onExportPress, extractCurrentSegmentFramesAsImages, extractSelectedSegmentsFramesAsImages, reorderSegsByStartTime, invertAllSegments, fillSegmentsGaps, combineOverlappingSegments, combineSelectedSegments, createFixedDurationSegments, createNumSegments, createFixedByteSizedSegments, createRandomSegments, alignSegmentTimesToKeyframes, shuffleSegments, clearSegments, toggleSegmentsList, toggleStreamsSelector, extractAllStreams, convertFormatBatch, concatBatch, toggleCaptureFormat, toggleStripAudio, toggleStripThumbnail, askStartTimeOffset, deselectAllSegments, selectAllSegments, selectOnlyCurrentSegment, editCurrentSegmentTags, toggleCurrentSegmentSelected, invertSelectedSegments, removeSelectedSegments, tryFixInvalidDuration, shiftAllSegmentTimes, toggleMuted, copySegmentsToClipboard, pasteFromClipboard, handleShowStreamsSelectorClick, openFilesDialog, openDirDialog, toggleSettings, createSegmentsFromKeyframes, toggleWaveformMode, toggleShowThumbnails, toggleShowKeyframes, showIncludeExternalStreamsDialog, toggleFullscreenVideo, selectAllMarkers, checkFileOpened, cutSegments, seekRel, keyboardSeekAccFactor, togglePlay, play, userChangePlaybackRate, keyboardNormalSeekSpeed, keyboardSeekSpeed2, keyboardSeekSpeed3, seekRelPercent, seekClosestKeyframe, shortStep, jumpSeg, zoomRel, batchFileJump, removeSegment, currentSegIndexSafe, cutSegmentsHistory, labelSegment, toggleLastCommands, userHtml5ifyCurrentFile, toggleKeyframeCut, setPlaybackVolume, closeFileWithConfirm, openSendReportDialogWithState, detectBlackScenes, detectSilentScenes, detectSceneChanges]);
 
   const getKeyboardAction = useCallback((action: MainKeyboardAction) => mainActions[action], [mainActions]);
 

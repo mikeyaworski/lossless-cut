@@ -422,19 +422,19 @@ function useSegments({ filePath, workingRef, setWorking, setProgress, videoStrea
     safeSetCutSegments(sortBy(cutSegments, (seg) => seg.start));
   }, [cutSegments, safeSetCutSegments]);
 
-  const addSegment = useCallback(() => {
+  const addSegment = useCallback((forcedStart?: number) => {
     try {
-      const suggestedStart = getRelevantTime();
+      const start = forcedStart ?? getRelevantTime();
       /* if (keyframeCut) {
         const keyframeAlignedStart = getSafeCutTime(suggestedStart, true);
         if (keyframeAlignedStart != null) suggestedStart = keyframeAlignedStart;
       } */
 
-      if (fileDuration == null || suggestedStart >= fileDuration) return;
+      if (fileDuration == null || start >= fileDuration) return;
 
       const initial = isInitialSegment(cutSegments);
 
-      const newSegment = createIndexedSegment({ segment: { start: suggestedStart }, incrementCount: !initial });
+      const newSegment = createIndexedSegment({ segment: { start }, incrementCount: !initial });
 
       // if initial segment, replace it instead
       const cutSegmentsNew = initial
