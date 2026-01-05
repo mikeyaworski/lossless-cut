@@ -90,7 +90,7 @@ import { rightBarWidth, leftBarWidth, ffmpegExtractWindow, zoomMax } from './uti
 import BigWaveform from './components/BigWaveform';
 
 import isDev from './isDev';
-import { BatchFile, Chapter, CustomTagsByFile, EdlExportType, EdlFileType, EdlImportType, FfmpegCommandLog, FilesMeta, goToTimecodeDirectArgsSchema, openFilesActionArgsSchema, ParamsByStreamId, PlaybackMode, SegmentBase, SegmentColorIndex, SegmentTags, StateSegment, TunerType } from './types';
+import { BatchFile, Chapter, CustomTagsByFile, EdlExportType, EdlFileType, EdlImportType, FfmpegCommandLog, FilesMeta, goToTimecodeDirectArgsSchema, openFilesActionArgsSchema, ParamsByStreamId, ParseTimecode, PlaybackMode, SegmentBase, SegmentColorIndex, SegmentTags, StateSegment, TunerType } from './types';
 import { CaptureFormat, KeyboardAction, Html5ifyMode, WaveformMode, ApiActionRequest, KeyBinding } from '../../../types';
 import { FFprobeChapter, FFprobeFormat, FFprobeStream } from '../../../ffprobe';
 import useLoading from './hooks/useLoading';
@@ -1959,10 +1959,65 @@ function App() {
     electron.clipboard.writeText(await formatTsv(selectedSegments));
   }, [isFileOpened, selectedSegments]);
 
-  const pasteFromClipboard = useCallback(() => {
-    const clipboardText = electron.clipboard.readText();
-    console.log('Pasted:', clipboardText);
+  // Parse time formats: 1h2m5s or 01:02:03.050
+  const parseClipboardTime = useCallback((text: string, parseTimecodeFn: ParseTimecode): number | undefined => {
+    // Format 1: 1h2m5s style (e.g., 1h2m5s, 05m04s, 1h5s)
+    const hmsMatch = text.match(/^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$/);
+    if (hmsMatch) {
+      const hours = hmsMatch[1] ? parseInt(hmsMatch[1], 10) : 0;
+      const minutes = hmsMatch[2] ? parseInt(hmsMatch[2], 10) : 0;
+      const seconds = hmsMatch[3] ? parseInt(hmsMatch[3], 10) : 0;
+      // Need at least one component
+      if (hmsMatch[1] || hmsMatch[2] || hmsMatch[3]) {
+        return hours * 3600 + minutes * 60 + seconds;
+      }
+      return undefined;
+    }
+
+    // Format 2: 01:02:03.050 style (HH:MM:SS.mmm)
+    const timestampMatch = text.match(/^\d{2}:\d{2}:\d{2}\.\d{3}$/);
+    if (timestampMatch) {
+      // Use parseTimecode which handles this format
+      return parseTimecodeFn(text);
+    }
+
+    return undefined;
   }, []);
+
+  const pasteFromClipboard = useCallback(() => {
+    try {
+      const clipboardText = electron.clipboard.readText().trim();
+      if (!clipboardText) return;
+
+      const parsedTime = parseClipboardTime(clipboardText, parseTimecode);
+      if (parsedTime === undefined) {
+        // Not a valid time format, ignore
+        return;
+      }
+
+      if (!checkFileOpened() || fileDuration == null) return;
+
+      // Clamp time to valid range
+      const clampedTime = Math.max(0, Math.min(parsedTime, fileDuration));
+
+      // Decide whether to update existing segment or create new one
+      if (currentCutSeg == null || (currentCutSeg.end != null && currentCutSeg.end < fileDuration)) {
+        // Active segment has both start and end time (not at end of video), create new segment
+        addSegment();
+        // Set the start time of the newly created segment
+        setCutTime('start', clampedTime);
+      } else if (currentCutSeg.start === 0) {
+        // Active segment has no end time or end is at end of video
+        // Start is at 0, update the start time
+        setCutTime('start', clampedTime);
+      } else {
+        // Start is not 0, update the end time
+        setCutTime('end', clampedTime);
+      }
+    } catch (err) {
+      console.error('Error pasting from clipboard:', err);
+    }
+  }, [checkFileOpened, fileDuration, currentCutSeg, addSegment, setCutTime, parseTimecode, parseClipboardTime]);
 
   const showIncludeExternalStreamsDialog = useCallback(async () => {
     await withErrorHandling(async () => {
