@@ -103,6 +103,7 @@ import useStreamsMeta from './hooks/useStreamsMeta';
 import { bottomStyle, videoStyle } from './styles';
 import styles from './App.module.css';
 import { DirectoryAccessDeclinedError } from '../errors';
+import { parseHumanishTimecode } from './util/timecode';
 
 const electron = window.require('electron');
 const { exists } = window.require('fs-extra');
@@ -1959,62 +1960,46 @@ function App() {
     electron.clipboard.writeText(await formatTsv(selectedSegments));
   }, [isFileOpened, selectedSegments]);
 
-  // Parse time formats: 1h2m5s or 01:02:03.050
-  const parseClipboardTime = useCallback((text: string, parseTimecodeFn: ParseTimecode): number | undefined => {
-    // Format 1: 1h2m5s style (e.g., 1h2m5s, 05m04s, 1h5s)
-    const hmsMatch = text.match(/^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$/);
-    // Need at least one component (don't match empty string)
-    if (hmsMatch && (hmsMatch[1] || hmsMatch[2] || hmsMatch[3])) {
-      const hours = hmsMatch[1] ? parseInt(hmsMatch[1], 10) : 0;
-      const minutes = hmsMatch[2] ? parseInt(hmsMatch[2], 10) : 0;
-      const seconds = hmsMatch[3] ? parseInt(hmsMatch[3], 10) : 0;
-      return hours * 3600 + minutes * 60 + seconds;
-    }
-
-    // Format 2: Try parseTimecode which handles various timestamp formats
-    // This will handle formats like 01:02:03.050, 1:23:45.678, etc.
-    const parsedTimecode = parseTimecodeFn(text);
-    if (parsedTimecode !== undefined) {
-      return parsedTimecode;
-    }
-
-    return undefined;
-  }, []);
+  const parseClipboardTime = useCallback((text: string): number | null | undefined => {
+    // For some reason, parseTimecode is a hook instead of a util function.
+    // Instead of adding the humanish timecode parsing into that hook,
+    // I'm going to keep it separate to not cause any accidental bugs
+    // and not add to the mess.
+    let parsedTimecode: number | null | undefined = parseHumanishTimecode(text);
+    if (parsedTimecode == null) parsedTimecode = parseTimecode(text);
+    return parsedTimecode;
+  }, [parseTimecode]);
 
   const pasteFromClipboard = useCallback(() => {
     try {
       const clipboardText = electron.clipboard.readText().trim();
-      if (!clipboardText) return;
+      if (!clipboardText || !checkFileOpened() || fileDuration == null) return;
 
-      const parsedTime = parseClipboardTime(clipboardText, parseTimecode);
-      if (parsedTime === undefined) {
-        // Not a valid time format, ignore
-        return;
-      }
+      let pastedTime = parseClipboardTime(clipboardText);
+      if (pastedTime == null) return;
+      pastedTime = Math.max(0, Math.min(pastedTime, fileDuration));
 
-      if (!checkFileOpened() || fileDuration == null) return;
-
-      // Clamp time to valid range
-      const clampedTime = Math.max(0, Math.min(parsedTime, fileDuration));
-
-      // Decide whether to update existing segment or create new one
+      // Either update the existing segment or create a new one
       if (currentCutSeg == null || (currentCutSeg.end != null && currentCutSeg.end < fileDuration)) {
-        // Active segment has both start and end time (not at end of video), create new segment
-        addSegment();
-        // Set the start time of the newly created segment
-        setCutTime('start', clampedTime);
+        // Create a new segment
+        // Active segment is complete and not a default
+        addSegment(pastedTime);
+        console.log('Pasted time code.', 'Created a new segment at', pastedTime);
       } else if (currentCutSeg.start === 0) {
-        // Active segment has no end time or end is at end of video
-        // Start is at 0, update the start time
-        setCutTime('start', clampedTime);
+        // Update start time
+        // Active segment spans the entire video, meaning it is a default segment
+        console.log('Pasted time code.', 'Updated start time of active segment to', pastedTime);
+        setCutTime('start', pastedTime);
       } else {
-        // Start is not 0, update the end time
-        setCutTime('end', clampedTime);
+        // Update end time
+        // Start time is already set and the end time is either unset or at the end of the file, which is the default
+        console.log('Pasted time code.', 'Updated end time of active segment to', pastedTime);
+        setCutTime('end', pastedTime);
       }
     } catch (err) {
       console.error('Error pasting from clipboard:', err);
     }
-  }, [checkFileOpened, fileDuration, currentCutSeg, addSegment, setCutTime, parseTimecode, parseClipboardTime]);
+  }, [checkFileOpened, fileDuration, currentCutSeg, addSegment, setCutTime, parseClipboardTime]);
 
   const showIncludeExternalStreamsDialog = useCallback(async () => {
     await withErrorHandling(async () => {
@@ -2155,7 +2140,7 @@ function App() {
       undo: () => cutSegmentsHistory.back(),
       redo: () => cutSegmentsHistory.forward(),
       labelCurrentSegment: () => { labelSegment(currentSegIndexSafe); return false; },
-      addSegment,
+      addSegment: () => addSegment(),
       duplicateCurrentSegment,
       toggleLastCommands: () => { toggleLastCommands(); return false; },
       export: onExportPress,
